@@ -38,14 +38,14 @@ function task(overrides: Partial<BackgroundTaskForUi> = {}): BackgroundTaskForUi
 	};
 }
 
-function manager(options: Partial<ConstructorParameters<typeof BackgroundTasksManager>[3]> = {}, tasks: BackgroundTaskForUi[] = [task()]) {
+function manager(options: Partial<ConstructorParameters<typeof BackgroundTasksManager>[3]> = {}, tasks: BackgroundTaskForUi[] = [task()], terminal: { columns?: number; rows?: number } = {}) {
 	let closed = false;
 	let renders = 0;
 	const stopped: string[] = [];
 	const paths: string[] = [];
 	const seen = new Set<string>();
 	const instance = new BackgroundTasksManager(
-		{ requestRender: () => { renders++; } },
+		{ requestRender: () => { renders++; }, terminal },
 		theme,
 		() => { closed = true; },
 		{
@@ -185,6 +185,43 @@ describe("BackgroundTasksManager component", () => {
 				h.instance.handleInput("\x1b[D");
 				text = stripAnsi(h.instance.render(100).join("\n"));
 				assert.match(text, /bg tasks focused/);
+			} finally {
+				h.instance.dispose();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses full overlay height below the 60-percent threshold", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-bg-small-pane-"));
+		try {
+			const outputAbsPath = join(dir, "task.output");
+			const fileLines = Array.from({ length: 40 }, (_, i) => `SMALL-${String(i + 1).padStart(3, "0")}`);
+			await writeFile(outputAbsPath, `${fileLines.join("\n")}\n`, "utf8");
+			const terminalRows = 20;
+			const h = manager(
+				{ initialTaskId: "b12345678" },
+				[task({
+					outputAbsPath,
+					bytesWritten: 400,
+					description: "Long detail text that would otherwise push the footer below the overlay clip.",
+					model: "openai-codex/gpt-5.5",
+					contextUsage: { tokens: 42_000, contextWindow: 200_000, percent: 21 },
+					tokenUsage: { input: 1000, output: 200, cacheRead: 30, cacheWrite: 20, totalTokens: 1250 },
+					toolUsage: { total: 3, failed: 1, byName: { bash: 2, read: 1 } },
+				})],
+				{ columns: 100, rows: terminalRows },
+			);
+			try {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				const maxOverlayLines = terminalRows - 1;
+				const lines = h.instance.render(100);
+				const text = stripAnsi(lines.join("\n"));
+				assert.ok(lines.length <= maxOverlayLines, `rendered ${lines.length} lines, expected <= ${maxOverlayLines}`);
+				assert.match(text, /Output tail:/);
+				assert.match(text, /↑\/↓ scroll/);
+				assert.match(text, /╰/);
 			} finally {
 				h.instance.dispose();
 			}

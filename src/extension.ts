@@ -234,7 +234,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 				},
 				{
 					overlay: true,
-					overlayOptions: { anchor: "bottom-center", width: "96%", minWidth: 64, maxHeight: "60%", margin: { bottom: 1, left: 1, right: 1 } },
+					overlayOptions: { anchor: "bottom-center", width: "96%", minWidth: 64, maxHeight: "100%", margin: { bottom: 1, left: 1, right: 1 } },
 				},
 			);
 		} finally {

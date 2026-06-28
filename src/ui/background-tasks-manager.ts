@@ -14,6 +14,7 @@ import {
 
 export type BackgroundTaskForUi = BgTaskSnapshot & { name: string; outputAbsPath: string };
 type BgTask = BackgroundTaskForUi;
+type TaskManagerTui = Pick<TUI, "requestRender"> & { terminal?: Partial<Pick<TUI["terminal"], "columns" | "rows">> };
 
 const STATUS_INTERVAL_MS = 1000;
 // Detail-view scrollback reservoir. Larger than the model-facing log cap because
@@ -22,6 +23,13 @@ const STATUS_INTERVAL_MS = 1000;
 const DETAIL_TAIL_BYTES = 128 * 1024;
 const LIST_VISIBLE_ROWS = 14;
 const DETAIL_VISIBLE_OUTPUT_LINES = 12;
+const OVERLAY_MAX_HEIGHT_PERCENT = 60;
+const OVERLAY_VERTICAL_MARGIN_ROWS = 1;
+const FRAME_LINES = 7;
+const DETAIL_SEPARATOR_LINES = 2;
+const OUTPUT_BOX_CHROME_LINES = 3;
+const MIN_DETAIL_LINES = 1;
+const MIN_OUTPUT_LINES = 1;
 const BORDER_COLOR: ThemeColor | `#${string}` = "accent";
 const ANSI_FG_RESET = "\x1b[39m";
 
@@ -196,7 +204,7 @@ export class BackgroundTasksManager implements Component {
 	private refreshTimer: NodeJS.Timeout;
 
 	constructor(
-		private readonly tui: Pick<TUI, "requestRender">,
+		private readonly tui: TaskManagerTui,
 		private readonly theme: Theme,
 		private readonly done: (result: TaskManagerResult) => void,
 		private readonly options: TaskManagerOptions,
@@ -244,6 +252,15 @@ export class BackgroundTasksManager implements Component {
 	render(width: number): string[] {
 		const boxWidth = Math.max(2, Math.min(width, 118));
 		return this.mode === "detail" ? this.renderDetail(boxWidth) : this.renderList(boxWidth);
+	}
+
+	private maxOverlayLines(minLines: number): number {
+		const rows = this.tui.terminal?.rows;
+		if (!rows) return Number.POSITIVE_INFINITY;
+		const available = Math.max(1, rows - OVERLAY_VERTICAL_MARGIN_ROWS);
+		const maxHeight = Math.floor(rows * OVERLAY_MAX_HEIGHT_PERCENT / 100);
+		if (maxHeight < minLines) return available;
+		return Math.max(1, Math.min(maxHeight, available));
 	}
 
 	private close(): void {
@@ -630,7 +647,7 @@ export class BackgroundTasksManager implements Component {
 		const name = taskDisplayName(task);
 		const status = statusColor(this.theme, task.status);
 		const exit = task.exitCode !== undefined ? ` exit=${task.exitCode}` : "";
-		const body: string[] = [
+		const fullDetails: string[] = [
 			` ${this.theme.fg("toolTitle", "Name:")} ${this.theme.fg("accent", name)}`,
 			` ${this.theme.fg("toolTitle", "ID:")} ${this.theme.fg("accent", task.id)}`,
 			` ${this.theme.fg("toolTitle", "Status:")} ${status}${this.theme.fg("dim", exit)}`,
@@ -639,25 +656,44 @@ export class BackgroundTasksManager implements Component {
 			` ${this.theme.fg("toolTitle", "Output:")} ${this.theme.fg("accent", task.outputPath)}`,
 		];
 		if (task.description && compactWhitespace(task.description) !== compactWhitespace(name)) {
-			body.push(` ${this.theme.fg("toolTitle", "Description:")} ${truncateToWidth(task.description, width - 16)}`);
+			fullDetails.push(` ${this.theme.fg("toolTitle", "Description:")} ${truncateToWidth(task.description, width - 16)}`);
 		}
 		const modelDetail = formatModelDetail(task);
-		body.push(` ${this.theme.fg("toolTitle", "Model:")} ${task.model ? this.theme.fg("accent", modelDetail) : this.theme.fg("dim", modelDetail)}`);
+		fullDetails.push(` ${this.theme.fg("toolTitle", "Model:")} ${task.model ? this.theme.fg("accent", modelDetail) : this.theme.fg("dim", modelDetail)}`);
 		const context = formatContextDetail(task);
-		body.push(` ${this.theme.fg("toolTitle", "Context:")} ${contextColor(this.theme, task, context)}`);
-		body.push(` ${this.theme.fg("toolTitle", "Tokens:")} ${this.theme.fg("dim", formatTokenDetail(task))}`);
-		body.push(` ${this.theme.fg("toolTitle", "Tools:")} ${this.theme.fg("dim", formatToolDetail(task))}`);
-		body.push(` ${this.theme.fg("toolTitle", "Command:")} ${truncateToWidth(task.command, width - 13)}`);
-		if (task.error) body.push(` ${this.theme.fg("error", `Error: ${task.error}`)}`);
-		body.push("", ` ${this.theme.fg("toolTitle", "Output tail:")}`);
-		body.push(...this.renderOutputBox(width - 4));
+		fullDetails.push(` ${this.theme.fg("toolTitle", "Context:")} ${contextColor(this.theme, task, context)}`);
+		fullDetails.push(` ${this.theme.fg("toolTitle", "Tokens:")} ${this.theme.fg("dim", formatTokenDetail(task))}`);
+		fullDetails.push(` ${this.theme.fg("toolTitle", "Tools:")} ${this.theme.fg("dim", formatToolDetail(task))}`);
+		fullDetails.push(` ${this.theme.fg("toolTitle", "Command:")} ${truncateToWidth(task.command, width - 13)}`);
+		if (task.error) fullDetails.push(` ${this.theme.fg("error", `Error: ${task.error}`)}`);
+
+		const actionLines = this.actionMessage ? 1 : 0;
+		const minRenderLines = FRAME_LINES + MIN_DETAIL_LINES + DETAIL_SEPARATOR_LINES + MIN_OUTPUT_LINES + OUTPUT_BOX_CHROME_LINES + actionLines;
+		const maxBodyLines = Math.max(1, this.maxOverlayLines(minRenderLines) - FRAME_LINES);
+		const fullOutputLines = DETAIL_VISIBLE_OUTPUT_LINES;
+		const fullBodyLines = fullDetails.length + DETAIL_SEPARATOR_LINES + fullOutputLines + OUTPUT_BOX_CHROME_LINES + actionLines;
+		let details = fullDetails;
+		let outputLines = fullOutputLines;
+		if (fullBodyLines > maxBodyLines) {
+			const compactDetails = [
+				` ${this.theme.fg("toolTitle", "Name:")} ${this.theme.fg("accent", name)} ${this.theme.fg("dim", "·")} ${status}${this.theme.fg("dim", exit)}`,
+				` ${this.theme.fg("toolTitle", "Output:")} ${this.theme.fg("accent", task.outputPath)}`,
+				` ${this.theme.fg("toolTitle", "Command:")} ${truncateToWidth(task.command, width - 13)}`,
+			];
+			if (task.error) compactDetails.splice(2, 0, ` ${this.theme.fg("error", `Error: ${task.error}`)}`);
+			const detailBudget = Math.max(MIN_DETAIL_LINES, maxBodyLines - DETAIL_SEPARATOR_LINES - OUTPUT_BOX_CHROME_LINES - actionLines - MIN_OUTPUT_LINES);
+			details = compactDetails.slice(0, detailBudget);
+			outputLines = Math.max(MIN_OUTPUT_LINES, Math.min(fullOutputLines, maxBodyLines - details.length - DETAIL_SEPARATOR_LINES - OUTPUT_BOX_CHROME_LINES - actionLines));
+		}
+
+		const body: string[] = [...details, "", ` ${this.theme.fg("toolTitle", "Output tail:")}`, ...this.renderOutputBox(width - 4, outputLines)];
 		if (this.actionMessage) body.push(this.theme.fg("warning", ` ${this.actionMessage}`));
 		const subtitle = `${task.id} · ${task.status === "running" ? "live tail refreshes every second" : "final output"}`;
 		const footer = ` ${this.theme.fg("dim", "↑/↓ scroll · ← list · r refresh · k stop · R rerun · c path · x close")}`;
 		return this.frame(`bg: ${truncateChars(name, 64)}`, subtitle, body, footer, width);
 	}
 
-	private renderOutputBox(width: number): string[] {
+	private renderOutputBox(width: number, visibleOutputLines = DETAIL_VISIBLE_OUTPUT_LINES): string[] {
 		const inner = Math.max(1, width - 2);
 		const border = (value: string) => colorText(this.theme, BORDER_COLOR, value);
 		const top = ` ${border(`╭${"─".repeat(inner)}╮`)}`;
@@ -669,23 +705,23 @@ export class BackgroundTasksManager implements Component {
 		} else if (this.detailLines.length === 0) {
 			lines.push(row(this.theme.fg("dim", "No output yet")));
 		} else {
-			const maxTop = Math.max(0, this.detailLines.length - DETAIL_VISIBLE_OUTPUT_LINES);
+			const maxTop = Math.max(0, this.detailLines.length - visibleOutputLines);
 			const start = this.detailFollow ? maxTop : Math.min(this.detailScrollTop, maxTop);
-			const windowLines = this.detailLines.slice(start, start + DETAIL_VISIBLE_OUTPUT_LINES);
+			const windowLines = this.detailLines.slice(start, start + visibleOutputLines);
 			for (const line of windowLines) lines.push(row(this.theme.fg("toolOutput", line)));
 		}
-		while (lines.length < DETAIL_VISIBLE_OUTPUT_LINES + 1) lines.push(row());
+		while (lines.length < visibleOutputLines + 1) lines.push(row());
 		lines.push(bottom);
-		lines.push(` ${this.theme.fg("dim", this.outputStatusLine())}`);
+		lines.push(` ${this.theme.fg("dim", this.outputStatusLine(visibleOutputLines))}`);
 		return lines;
 	}
 
-	private outputStatusLine(): string {
+	private outputStatusLine(visibleOutputLines = DETAIL_VISIBLE_OUTPUT_LINES): string {
 		const total = this.detailLines.length;
 		if (!this.detailFollow && total > 0) {
-			const maxTop = Math.max(0, total - DETAIL_VISIBLE_OUTPUT_LINES);
+			const maxTop = Math.max(0, total - visibleOutputLines);
 			const start = Math.min(this.detailScrollTop, maxTop);
-			const end = Math.min(total, start + DETAIL_VISIBLE_OUTPUT_LINES);
+			const end = Math.min(total, start + visibleOutputLines);
 			return `lines ${start + 1}\u2013${end} of ${total} · ↑/↓ PgUp/PgDn scroll · ↓ at bottom follows`;
 		}
 		const suffix = this.tailTruncated ? ` of ${formatSize(this.tailTotalBytes)}` : "";
