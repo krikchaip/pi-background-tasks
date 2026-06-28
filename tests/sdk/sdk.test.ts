@@ -36,6 +36,10 @@ const extensionPath = resolve('extensions/background-tasks.ts');
 const scriptedProviderPath = resolve('tests/scripted-provider/scripted-provider-extension.ts');
 const roots: string[] = [];
 
+function metadataPathFor(task: BgTaskSnapshot): string {
+  return task.outputPath.replace(/\.output$/, '.json');
+}
+
 function skipWin32PiPathFixture(t: TestContext, target: string): boolean {
   if (process.platform !== 'win32') return false;
   t.skip(
@@ -524,7 +528,7 @@ async function settledFooter(
 
 void describe('sdk', () => {
   void it('registers commands, tools, shortcuts, renderers, and runs with output and metadata files', async () => {
-    const { session, cwd } = await harness();
+    const { session } = await harness();
     try {
       for (const tool of ['bg_run', 'bg_status', 'bg_logs', 'bg_kill'])
         assert.ok(session.getActiveToolNames().includes(tool), tool);
@@ -568,8 +572,9 @@ void describe('sdk', () => {
       assert.equal(t.status, 'completed');
       assert.equal(t.name, 'SDK Echo');
       assert.equal(t.isAgent, false);
-      assert.ok(existsSync(join(cwd, t.outputPath)));
-      const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, '.json'));
+      assert.equal(dirname(dirname(t.outputPath)), join(tmpdir(), 'pi-bg-tasks'));
+      assert.ok(existsSync(t.outputPath));
+      const metadataPath = metadataPathFor(t);
       assert.ok(existsSync(metadataPath));
       const metadata = await readJsonWithStatus(metadataPath, 'completed');
       assert.equal(metadata['status'], 'completed');
@@ -709,7 +714,7 @@ void describe('sdk', () => {
       terminals.push(task);
       eventOrder.push(`terminal:${task.id}:${task.status}`);
     });
-    const { session, cwd } = await harness({ eventBus });
+    const { session } = await harness({ eventBus });
     try {
       await session.extensionRunner.emit({ type: 'session_start', reason: 'startup' });
       const caps = await emitEventRequest(eventBus, 'sdk-cap', 'capabilities', {});
@@ -728,7 +733,7 @@ void describe('sdk', () => {
         task.status === 'running' || task.status === 'completed',
         `immediate run response status should be a valid launch snapshot, got ${task.status}`,
       );
-      assert.ok(existsSync(join(cwd, task.outputPath)));
+      assert.ok(existsSync(task.outputPath));
       const terminal = await waitForTerminalSnapshot(terminals, task.id);
       assert.equal(terminal.status, 'completed');
       assert.equal(terminals.filter((entry) => entry.id === task.id).length, 1);
@@ -881,7 +886,7 @@ console.error('sdk stderr');
         totalTokens: 30,
         costTotal: 0.44,
       });
-      const attestationPath = join(cwd, task.outputPath.replace(/\.output$/, '.attestation.json'));
+      const attestationPath = task.outputPath.replace(/\.output$/, '.attestation.json');
       for (let attempt = 0; attempt < 100 && !existsSync(attestationPath); attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
@@ -910,9 +915,9 @@ console.error('sdk stderr');
         requiredJsonObject(artifacts['task_output'], 'task output')['sha256'],
         sourceHashes['output_sha256'],
       );
-      assert.match(await readFile(join(cwd, task.outputPath), 'utf8'), /sdk attested done/);
+      assert.match(await readFile(task.outputPath, 'utf8'), /sdk attested done/);
       assert.match(
-        await readFile(join(cwd, task.outputPath.replace(/\.output$/, '.stderr')), 'utf8'),
+        await readFile(task.outputPath.replace(/\.output$/, '.stderr'), 'utf8'),
         /sdk stderr/,
       );
     } finally {
@@ -1072,7 +1077,7 @@ console.error('sdk stderr');
   });
 
   void it('captures only task-owned explicit telemetry in snapshots and metadata', async () => {
-    const { session, cwd } = await harness();
+    const { session } = await harness();
     try {
       const tool = session.getToolDefinition('bg_run');
       assert.ok(tool, 'bg_run tool should be registered');
@@ -1110,7 +1115,7 @@ console.error('sdk stderr');
       assert.match(resultText(status), /model=test-provider\/test-model/);
       assert.match(resultText(status), /tokens=1\.3k/);
       assert.match(resultText(status), /tools=2 failed=1/);
-      const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, '.json'));
+      const metadataPath = metadataPathFor(t);
       let metadata = parseJsonObject(
         await readFile(metadataPath, 'utf8'),
         'telemetry metadata should be an object',
@@ -1244,7 +1249,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
       assert.doesNotMatch(logText, /background-task-telemetry/);
       assert.doesNotMatch(logText, /background-task-context-usage/);
       assert.doesNotMatch(logText, /background-task-activity/);
-      const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, '.json'));
+      const metadataPath = metadataPathFor(t);
       const metadata = parseJsonObject(
         await readFile(metadataPath, 'utf8'),
         'wrapped Pi metadata should be an object',
@@ -1490,7 +1495,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
     } else {
       process.env['SHELL'] = '/definitely/missing/pi-bg-shell';
     }
-    const { session, cwd } = await harness();
+    const { session } = await harness();
     try {
       const r = await exec(session, 'bg_run', {
         isAgent: false,
@@ -1502,7 +1507,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
       const t = await wait(session, taskFromResult(r).id);
       assert.equal(t.status, 'failed');
       assert.match(t.error ?? '', /ENOENT|no such file/i);
-      const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, '.json'));
+      const metadataPath = metadataPathFor(t);
       const metadata = await readJsonWithStatus(metadataPath, 'failed');
       assert.equal(metadata['status'], 'failed');
     } finally {

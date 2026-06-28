@@ -2,6 +2,7 @@ import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
@@ -67,6 +68,7 @@ export const KILL_GRACE_MS = 3000;
 export const STOP_WAIT_MS = KILL_GRACE_MS + 1500;
 export const MAX_RECENT_TASKS = 100;
 const TELEMETRY_BUFFER_CHARS = 512 * 1024;
+const TASK_OUTPUT_ROOT = join(tmpdir(), 'pi-bg-tasks');
 export const WIN32_CMD_PI_TELEMETRY_UNAVAILABLE_REASON =
   'win32-cmd-cannot-safely-intercept-pi-argv';
 
@@ -741,11 +743,10 @@ export class BackgroundTaskRegistry {
   async ensureRuntimeDir(ctx: BackgroundTaskContext): Promise<RuntimeDir> {
     if (this.runtimeDir) return this.runtimeDir;
     const sessionId = sanitizePathSegment(ctx.sessionId ?? `session-${String(process.pid)}`);
-    const runId = `${sessionId}-${String(process.pid)}`;
-    const runtimeDirAbs = join(ctx.cwd, '.pi', 'tasks', runId);
-    const runtimeDirDisplay = join('.pi', 'tasks', runId);
+    const runId = `${sessionId}-${String(process.pid)}-${randomBytes(3).toString('hex')}`;
+    const runtimeDirAbs = join(TASK_OUTPUT_ROOT, runId);
     await mkdir(runtimeDirAbs, { recursive: true });
-    this.runtimeDir = { abs: runtimeDirAbs, display: runtimeDirDisplay };
+    this.runtimeDir = { abs: runtimeDirAbs, display: runtimeDirAbs };
     return this.runtimeDir;
   }
 

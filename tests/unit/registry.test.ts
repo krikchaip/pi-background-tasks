@@ -351,6 +351,27 @@ async function startFakeTask(
 }
 
 void describe('BackgroundTaskRegistry', () => {
+  void it('stores task output artifacts in the system temporary directory', async () => {
+    const h = await createHarness();
+    let task: BgTask | undefined;
+    try {
+      const started = await startFakeTask(h);
+      task = started.task;
+      const outputRoot = join(tmpdir(), 'pi-bg-tasks');
+      assert.equal(dirname(dirname(task.outputPath)), outputRoot);
+      assert.equal(dirname(dirname(task.outputAbsPath)), outputRoot);
+      assert.equal(dirname(dirname(task.metadataAbsPath)), outputRoot);
+      assert.equal(task.outputPath, task.outputAbsPath);
+      assert.equal(task.outputPath.startsWith(h.cwd), false);
+      await waitFor(() => existsSync(task!.outputAbsPath), 'output file creation');
+      started.child.close(0, null);
+      await waitFor(() => task!.status === 'completed', 'task completion');
+    } finally {
+      if (task) await rm(dirname(task.outputAbsPath), { recursive: true, force: true });
+      await cleanup(h.root);
+    }
+  });
+
   void it('preserves full shell command bytes except surrounding whitespace', async () => {
     const h = await createHarness({ platform: 'linux' });
     try {
@@ -1005,7 +1026,7 @@ void describe('BackgroundTaskRegistry', () => {
     const metadataFailure = await createHarness();
     try {
       const { task, child } = await startFakeTask(metadataFailure, 'Metadata Failure');
-      await rm(join(metadataFailure.cwd, '.pi'), { recursive: true, force: true });
+      await rm(dirname(task.outputAbsPath), { recursive: true, force: true });
       child.close(0, null);
       await waitFor(() => task.status === 'failed', 'metadata failure task completion');
       await waitFor(

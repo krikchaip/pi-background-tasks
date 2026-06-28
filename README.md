@@ -192,11 +192,11 @@ Terminal events keep the strict paired-consumer frame `{ schema_version: "pi-bac
 
 ## Runtime files
 
-Task output and metadata are written under the current project:
+Task output and metadata are written under the system temporary directory:
 
 ```text
-.pi/tasks/<session-id>-<pid>/<task-id>.output
-.pi/tasks/<session-id>-<pid>/<task-id>.json
+<system-temp>/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.output
+<system-temp>/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.json
 ```
 
 Fusion writes private debugging artifacts under:
@@ -210,13 +210,13 @@ Each run contains `manifest.json`, `canonical-input.json`, `context-omission-led
 For attested Pi tasks only, the task id is `b` plus 32 random hex characters (128 bits) and additional flat siblings are written in the same directory:
 
 ```text
-.pi/tasks/<session-id>-<pid>/<task-id>.pi-events.jsonl
-.pi/tasks/<session-id>-<pid>/<task-id>.stderr
-.pi/tasks/<session-id>-<pid>/<task-id>.pi-telemetry-wrapper.cjs
-.pi/tasks/<session-id>-<pid>/<task-id>.attestation.json
+<system-temp>/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.pi-events.jsonl
+<system-temp>/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.stderr
+<system-temp>/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.pi-telemetry-wrapper.cjs
+<system-temp>/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.attestation.json
 ```
 
-The attestation sidecar uses `schema_version: "phase2.pi_task_attestation.v1"` and is written last, after metadata/output/events/stderr/wrapper/report bytes are closed and hashed. An attested task does not become externally visible as `completed` until final metadata and the sidecar are durable. These are local runtime artifacts and should remain gitignored.
+The attestation sidecar uses `schema_version: "phase2.pi_task_attestation.v1"` and is written last, after metadata/output/events/stderr/wrapper/report bytes are closed and hashed. An attested task does not become externally visible as `completed` until final metadata and the sidecar are durable. These are local runtime artifacts outside the project and should remain gitignored.
 
 ## Durability model
 
