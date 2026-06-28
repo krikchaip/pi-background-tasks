@@ -441,7 +441,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 	pi.registerTool<typeof BgRunParams, BgRunDetails>({
 		name: "bg_run",
 		label: "Background Run",
-		description: `Start a named long-running shell command in the background and return immediately with a task ID and output path. Output is written to .pi/tasks and model-visible logs are bounded to ${formatSize(MAX_LOG_BYTES)}.`,
+		description: `Start a named long-running shell command in the background and return immediately with a task ID and output path. Output is written to /tmp/pi-bg-tasks and model-visible logs are bounded to ${formatSize(MAX_LOG_BYTES)}.`,
 		promptSnippet: "Start named long-running shell commands in the background and return a task ID plus output file path",
 		promptGuidelines: [
 			"Use bg_run instead of bash for commands expected to run for a long time, such as test suites, dev servers, watchers, builds, or sleeps.",

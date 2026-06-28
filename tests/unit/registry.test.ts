@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -142,6 +142,26 @@ async function startFakeTask(h: Awaited<ReturnType<typeof createHarness>>, name 
 }
 
 describe("BackgroundTaskRegistry", () => {
+	it("stores task output artifacts under /tmp/pi-bg-tasks", async () => {
+		const h = await createHarness();
+		let task: BgTask | undefined;
+		try {
+			let child: FakeChild;
+			({ task, child } = await startFakeTask(h));
+			assert.match(task.outputPath, /^\/tmp\/pi-bg-tasks\//);
+			assert.match(task.outputAbsPath, /^\/tmp\/pi-bg-tasks\//);
+			assert.match(task.metadataAbsPath, /^\/tmp\/pi-bg-tasks\//);
+			assert.equal(task.outputPath, task.outputAbsPath);
+			assert.equal(task.outputPath.startsWith(h.cwd), false);
+			await waitFor(() => existsSync(task!.outputAbsPath), "output file creation");
+			child.close(0, null);
+			await waitFor(() => task!.status === "completed", "task completion");
+		} finally {
+			if (task) await rm(join(task.outputAbsPath, ".."), { recursive: true, force: true });
+			await cleanup(h.root);
+		}
+	});
+
 	it("uses explicit isAgent to decide Pi telemetry wrapping", async () => {
 		assert.equal(commandMayLaunchPiAgent("pi -p hello"), true);
 		assert.equal(commandMayLaunchPiAgent("/usr/local/bin/pi -p hello"), false, "shell-function wrapper cannot intercept path-qualified pi commands");

@@ -35,6 +35,7 @@ export const KILL_GRACE_MS = 3000;
 export const STOP_WAIT_MS = KILL_GRACE_MS + 1500;
 export const MAX_RECENT_TASKS = 100;
 const TELEMETRY_BUFFER_CHARS = 512 * 1024;
+const TASK_OUTPUT_ROOT = "/tmp/pi-bg-tasks";
 
 export type BackgroundTaskContext = {
 	cwd: string;
@@ -549,11 +550,10 @@ export class BackgroundTaskRegistry {
 	async ensureRuntimeDir(ctx: BackgroundTaskContext): Promise<RuntimeDir> {
 		if (this.runtimeDir) return this.runtimeDir;
 		const sessionId = sanitizePathSegment(ctx.sessionId ?? `session-${process.pid}`);
-		const runId = `${sessionId}-${process.pid}`;
-		const runtimeDirAbs = join(ctx.cwd, ".pi", "tasks", runId);
-		const runtimeDirDisplay = join(".pi", "tasks", runId);
+		const runId = `${sessionId}-${process.pid}-${randomBytes(3).toString("hex")}`;
+		const runtimeDirAbs = join(TASK_OUTPUT_ROOT, runId);
 		await mkdir(runtimeDirAbs, { recursive: true });
-		this.runtimeDir = { abs: runtimeDirAbs, display: runtimeDirDisplay };
+		this.runtimeDir = { abs: runtimeDirAbs, display: runtimeDirAbs };
 		return this.runtimeDir;
 	}
 

@@ -97,14 +97,14 @@ The lookup runs at most once per session on `session_start`, is time-boxed, and 
 
 ## Runtime files
 
-Task output and metadata are written under the current project:
+Task output and metadata are written outside the current project:
 
 ```text
-.pi/tasks/<session-id>-<pid>/<task-id>.output
-.pi/tasks/<session-id>-<pid>/<task-id>.json
+/tmp/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.output
+/tmp/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.json
 ```
 
-These are runtime artifacts and should remain gitignored.
+These are runtime artifacts and are not project files.
 
 ## Safety model
 

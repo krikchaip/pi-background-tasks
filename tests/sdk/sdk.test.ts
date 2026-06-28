@@ -18,6 +18,10 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
+function metadataPathFor(task: BgTaskSnapshot): string {
+	return task.outputPath.replace(/\.output$/, ".json");
+}
+
 function resolvePiCli(): string | undefined {
 	const which = spawnSync("bash", ["-lc", "command -v pi"], { encoding: "utf8" });
 	return which.status === 0 ? which.stdout.trim() || undefined : undefined;
@@ -187,8 +191,9 @@ describe("sdk", () => {
 			assert.equal(t.status, "completed");
 			assert.equal(t.name, "SDK Echo");
 			assert.equal(t.isAgent, false);
-			assert.ok(existsSync(join(cwd, t.outputPath)));
-			const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, ".json"));
+			assert.match(t.outputPath, /^\/tmp\/pi-bg-tasks\//);
+			assert.ok(existsSync(t.outputPath));
+			const metadataPath = metadataPathFor(t);
 			assert.ok(existsSync(metadataPath));
 			const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
 			assert.equal(metadata.status, "completed");
@@ -301,7 +306,7 @@ describe("sdk", () => {
 			assert.match(status.content[0].text, /model=test-provider\/test-model/);
 			assert.match(status.content[0].text, /tokens=1\.3k/);
 			assert.match(status.content[0].text, /tools=2 failed=1/);
-			const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, ".json"));
+			const metadataPath = metadataPathFor(t);
 			const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
 			assert.deepEqual(metadata.contextUsage, { tokens: 50_000, contextWindow: 200_000, percent: 25 });
 			assert.deepEqual(metadata.tokenUsage, t.tokenUsage);
@@ -386,7 +391,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			assert.doesNotMatch(logs.content[0].text, /background-task-telemetry/);
 			assert.doesNotMatch(logs.content[0].text, /background-task-context-usage/);
 			assert.doesNotMatch(logs.content[0].text, /background-task-activity/);
-			const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, ".json"));
+			const metadataPath = metadataPathFor(t);
 			const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
 			assert.deepEqual(metadata.contextUsage, t.contextUsage);
 			assert.deepEqual(metadata.tokenUsage, t.tokenUsage);
@@ -593,7 +598,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			const t = await wait(session, r.details.task.id);
 			assert.equal(t.status, "failed");
 			assert.match(t.error, /ENOENT|no such file/i);
-			const metadataPath = join(cwd, t.outputPath.replace(/\.output$/, ".json"));
+			const metadataPath = metadataPathFor(t);
 			const metadata = await readJsonEventually(metadataPath);
 			assert.equal(metadata.status, "failed");
 		} finally {
