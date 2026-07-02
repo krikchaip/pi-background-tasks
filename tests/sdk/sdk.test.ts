@@ -538,12 +538,12 @@ void describe('sdk', () => {
       assert.ok(isJsonObject(bgRunParams), 'bg_run schema should be an object');
       const required = bgRunParams['required'];
       assert.ok(
-        Array.isArray(required) && required.includes('isAgent'),
-        'bg_run schema must require isAgent',
+        !Array.isArray(required) || !required.includes('isAgent'),
+        'bg_run schema must hide isAgent',
       );
       const properties = bgRunParams['properties'];
-      const isAgentSchema = isJsonObject(properties) ? properties['isAgent'] : bgRunParams;
-      assert.match(JSON.stringify(isAgentSchema), /LLM\/agent/);
+      assert.equal(isJsonObject(properties) ? properties['isAgent'] : undefined, undefined);
+      assert.doesNotMatch(JSON.stringify(bgRunParams), /LLM\/agent|isAgent/);
       const cmds = session.extensionRunner.getRegisteredCommands().map((c) => c.invocationName);
       for (const cmd of [
         'bg',
@@ -562,7 +562,6 @@ void describe('sdk', () => {
       assert.ok(shortcuts.has('ctrl+alt+c'));
 
       const r = await exec(session, 'bg_run', {
-        isAgent: false,
         name: 'SDK Echo',
         command: 'echo sdk-ok',
         notifyOnCompletion: false,
@@ -1462,24 +1461,20 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
       const tool = session.getToolDefinition('bg_run');
       assert.ok(tool?.prepareArguments);
       const prepared = requiredPrepared(
-        tool.prepareArguments({ command: 'npm run qa', description: 'Legacy QA', isAgent: false }),
+        tool.prepareArguments({ command: 'npm run qa', description: 'Legacy QA' }),
       );
       assert.equal(prepared.name, 'Legacy QA');
       assert.equal(prepared.isAgent, false);
       const agent = requiredPrepared(
-        tool.prepareArguments({ name: 'Legacy Agent', command: 'pi -p hi', isAgent: true }),
+        tool.prepareArguments({ name: 'Auto Agent', command: 'pi -p hi' }),
       );
       assert.equal(agent.isAgent, true);
-      assert.throws(
-        () => tool.prepareArguments?.({ command: 'pnpm test' }),
-        /requires isAgent boolean/,
+      const hiddenOverride = requiredPrepared(
+        tool.prepareArguments({ name: 'Plain Pi', command: 'pi -p hi', isAgent: false }),
       );
+      assert.equal(hiddenOverride.isAgent, false);
       assert.throws(() => tool.prepareArguments?.(null), /arguments must be an object/);
-      const invalid = { name: 'Background task', command: '', isAgent: false };
-      await assert.rejects(
-        () => exec(session, 'bg_run', { name: 'Missing Agent Flag', command: 'echo ok' }),
-        /requires isAgent boolean/,
-      );
+      const invalid = { name: 'Background task', command: '' };
       await assert.rejects(() => exec(session, 'bg_run', invalid), /Background command is empty/);
     } finally {
       await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
