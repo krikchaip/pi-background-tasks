@@ -23,7 +23,7 @@ import {
 	type StartTaskOptions,
 } from "./core/common.js";
 import { fetchLatestVersion, readPackageInfo, type FetchLatestVersionOptions } from "./core/update-check.js";
-import { BackgroundTaskRegistry } from "./core/registry.js";
+import { BackgroundTaskRegistry, commandMayLaunchPiAgent } from "./core/registry.js";
 import { BackgroundTasksManager, type BackgroundTaskForUi, type TaskManagerResult } from "./ui/background-tasks-manager.js";
 
 /**
@@ -74,7 +74,6 @@ type TextToolResult = { content?: readonly { type: string; text?: string }[] };
 const BgRunParams = Type.Object({
 	name: Type.String({ description: "Short human-readable task name shown in the bg footer dock. Required; use 2-6 words, not the raw command." }),
 	command: Type.String({ description: "Shell command to start in the background" }),
-	isAgent: Type.Boolean({ description: "Required. Set true only when this background task launches an LLM/agent process, such as a child `pi -p ...` or `pi --mode json ...`, so Pi-agent telemetry can be collected. Set false for scripts, tests, servers, sleeps, and ordinary shell commands." }),
 	description: Type.Optional(Type.String({ description: "Optional longer human-readable context for the task" })),
 	timeoutSeconds: Type.Optional(Type.Number({ description: "Optional timeout; task is failed and killed when exceeded" })),
 	notifyOnCompletion: Type.Optional(Type.Boolean({ description: "Whether to show a completion notification. Default: true." })),
@@ -95,7 +94,7 @@ const BgKillParams = Type.Object({
 	taskId: Type.String({ description: "Task ID or unambiguous prefix to stop" }),
 });
 
-type BgRunParamsValue = Static<typeof BgRunParams>;
+type BgRunParamsValue = Static<typeof BgRunParams> & { isAgent?: boolean | undefined };
 type BgStatusParamsValue = Static<typeof BgStatusParams>;
 type BgLogsParamsValue = Static<typeof BgLogsParams>;
 type BgKillParamsValue = Static<typeof BgKillParams>;
@@ -445,7 +444,6 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 		promptSnippet: "Start named long-running shell commands in the background and return a task ID plus output file path",
 		promptGuidelines: [
 			"Use bg_run instead of bash for commands expected to run for a long time, such as test suites, dev servers, watchers, builds, or sleeps.",
-			"Always set isAgent: true only when the background task launches an LLM/agent process; set isAgent: false for scripts, tests, dev servers, sleeps, and ordinary shell commands.",
 			"When using bg_run, always set name to a concise 2-6 word human-readable label for the footer task dock; do not use the raw command as the name unless it is already short and meaningful.",
 			"After bg_run, use bg_status and bg_logs to inspect progress; do not assume the background task completed until status says completed, failed, or killed.",
 			"When a <background-task-notification> appears, react to it: inspect bg_status/bg_logs as needed, then report completion, failure, or next steps to the user.",
@@ -455,13 +453,10 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 			if (!args || typeof args !== "object") throw new Error("bg_run arguments must be an object");
 			const input = args as Record<string, unknown>;
 			if (typeof input["command"] !== "string") throw new Error("bg_run requires command string");
-			if (typeof input["isAgent"] !== "boolean") {
-				throw new Error("bg_run requires isAgent boolean. Set true only for LLM/agent tasks; set false for scripts, tests, servers, sleeps, and ordinary shell commands.");
-			}
 			const prepared: BgRunParamsValue = {
 				command: input["command"],
 				name: normalizeTaskName(input["name"]) ?? normalizeTaskName(input["description"]) ?? deriveTaskNameFromCommand(input["command"]),
-				isAgent: input["isAgent"],
+				isAgent: typeof input["isAgent"] === "boolean" ? input["isAgent"] : commandMayLaunchPiAgent(input["command"]),
 			};
 			if (typeof input["description"] === "string") prepared.description = input["description"];
 			if (typeof input["timeoutSeconds"] === "number") prepared.timeoutSeconds = input["timeoutSeconds"];
@@ -470,18 +465,17 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 			return prepared;
 		},
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (typeof params.isAgent !== "boolean") {
-				throw new Error("bg_run requires isAgent boolean. Set true only for LLM/agent tasks; set false for scripts, tests, servers, sleeps, and ordinary shell commands.");
-			}
+			const input = params as BgRunParamsValue;
+			const isAgent = input.isAgent ?? commandMayLaunchPiAgent(input.command);
 			const taskOptions: StartTaskOptions = {
-				name: params.name,
-				isAgent: params.isAgent,
-				notifyOnCompletion: params.notifyOnCompletion ?? true,
-				triggerOnCompletion: params.triggerOnCompletion ?? true,
+				name: input.name,
+				isAgent,
+				notifyOnCompletion: input.notifyOnCompletion ?? true,
+				triggerOnCompletion: input.triggerOnCompletion ?? true,
 			};
-			if (params.description !== undefined) taskOptions.description = params.description;
-			if (params.timeoutSeconds !== undefined) taskOptions.timeoutSeconds = params.timeoutSeconds;
-			const task = await startTask(ctx, params.command, taskOptions);
+			if (input.description !== undefined) taskOptions.description = input.description;
+			if (input.timeoutSeconds !== undefined) taskOptions.timeoutSeconds = input.timeoutSeconds;
+			const task = await startTask(ctx, input.command, taskOptions);
 			return {
 				content: textContent(`Started background task ${taskDisplayName(task)} (${task.id})\nStatus: ${task.status}\nPID: ${task.pid ?? "unknown"}\nOutput: ${task.outputPath}`),
 				details: { task: registry.snapshot(task) },
