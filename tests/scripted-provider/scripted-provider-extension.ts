@@ -31,7 +31,8 @@ type Scenario =
   | 'failed-follow-up'
   | 'display-only-bg'
   | 'json-tool-telemetry'
-  | 'fusion-brainstorm';
+  | 'fusion-brainstorm'
+  | 'multiline-command';
 type ScriptedStopReason = 'stop' | 'length' | 'toolUse';
 
 type JsonObject = Record<PropertyKey, unknown>;
@@ -55,7 +56,8 @@ function parseScenario(value: string | undefined): Scenario {
     value === 'failed-follow-up' ||
     value === 'display-only-bg' ||
     value === 'json-tool-telemetry' ||
-    value === 'fusion-brainstorm'
+    value === 'fusion-brainstorm' ||
+    value === 'multiline-command'
   )
     return value;
   return 'bg-run-follow-up';
@@ -169,6 +171,38 @@ function responseFor(
       );
     }
     return assistant([text('Parent observed fusion result from fusion_brainstorm.')], 'stop');
+  }
+
+  if (scenario === 'multiline-command') {
+    if (callCount === 1) {
+      const command = [
+        "python3 -u -c 'import sys, time",
+        'for i in range(120):',
+        '    sys.stdout.write(f"\\x1b[2K\\r\\x1b[31mBLEED-PROBE-{i:03d}\\x1b[0m\\n")',
+        '    sys.stdout.write("\\x1b[1A\\x1b[12Ccursor-safe\\n")',
+        '    sys.stdout.write("\\x1b]0;SECRET-OSC\\x07OSC-safe\\n")',
+        '    sys.stdout.write("\\x1bPSECRET-DCS\\x1b\\\\DCS-safe\\n")',
+        '    sys.stdout.flush()',
+        "    time.sleep(0.25)'",
+      ].join('\n');
+      return assistant(
+        [
+          toolCall(
+            'bg_run',
+            {
+              name: 'Multiline Bleed',
+              command,
+              isAgent: false,
+              notifyOnCompletion: false,
+              triggerOnCompletion: false,
+            },
+            'call-bg-run-multiline',
+          ),
+        ],
+        'toolUse',
+      );
+    }
+    return assistant([text('Multiline bleed task started.')], 'stop');
   }
 
   if (scenario === 'json-tool-telemetry') {

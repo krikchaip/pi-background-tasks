@@ -42,6 +42,7 @@ import {
   type BackgroundTaskExtensionService,
 } from './core/extension-api.js';
 import {
+  BACKGROUND_TASKS_OVERLAY_OPTIONS,
   BackgroundTasksManager,
   type BackgroundTaskForUi,
   type TaskManagerResult,
@@ -395,13 +396,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
         },
         {
           overlay: true,
-          overlayOptions: {
-            anchor: 'bottom-center',
-            width: '96%',
-            minWidth: 64,
-            maxHeight: '100%',
-            margin: { bottom: 1, left: 1, right: 1 },
-          },
+          overlayOptions: BACKGROUND_TASKS_OVERLAY_OPTIONS,
         },
       );
     } finally {
