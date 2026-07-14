@@ -45,6 +45,7 @@
     "test": "npm run typecheck && npm run test:type-safety && npm run test:unit && npm run test:sdk && npm run test:rpc && npm run test:component && npm run test:package",
     "test:pty": "tsx --test tests/pty/**/*.test.ts",
     "test:agent-loop": "tsx --test tests/scripted-provider/**/*.test.ts",
+    "test:e2e:kitty": "bash tests/e2e/kitty-tmux-pi.sh",
     "test:full": "npm run test && npm run test:pty && npm run test:agent-loop",
     "smoke": "pi --no-extensions -e ./extensions/background-tasks.ts --offline --no-tools --no-session -p \"/jobs\"",
     "pack:dry-run": "npm pack --dry-run"

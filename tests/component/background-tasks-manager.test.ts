@@ -4,19 +4,22 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
-import { BackgroundTasksManager, type BackgroundTaskForUi } from "../../src/ui/background-tasks-manager.js";
+import { visibleWidth, type RgbColor } from "@earendil-works/pi-tui";
+import { BACKGROUND_TASKS_OVERLAY_OPTIONS, BackgroundTasksManager, type BackgroundTaskForUi } from "../../src/ui/background-tasks-manager.js";
 import { stripAnsi } from "../../src/testing/normalize.js";
 
 const themeColors: readonly ThemeColor[] = ["accent", "border", "borderAccent", "borderMuted", "success", "error", "warning", "muted", "dim", "text", "thinkingText", "userMessageText", "customMessageText", "customMessageLabel", "toolTitle", "toolOutput", "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded", "toolDiffRemoved", "toolDiffContext", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation", "thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh", "bashMode"];
 const themeBackgrounds = ["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"] as const;
 type ThemeForegrounds = ConstructorParameters<typeof Theme>[0];
 type ThemeBackgrounds = ConstructorParameters<typeof Theme>[1];
-const theme = new Theme(
-	Object.fromEntries(themeColors.map((color) => [color, "#ffffff"])) as ThemeForegrounds,
-	Object.fromEntries(themeBackgrounds.map((color) => [color, "#000000"])) as ThemeBackgrounds,
-	"truecolor",
-);
+function makeTheme(mode: ConstructorParameters<typeof Theme>[2]): Theme {
+	return new Theme(
+		Object.fromEntries(themeColors.map((color) => [color, "#ffffff"])) as ThemeForegrounds,
+		Object.fromEntries(themeBackgrounds.map((color) => [color, "#000000"])) as ThemeBackgrounds,
+		mode,
+	);
+}
+const theme = makeTheme("truecolor");
 
 function task(overrides: Partial<BackgroundTaskForUi> = {}): BackgroundTaskForUi {
 	const now = Date.now();
@@ -38,15 +41,26 @@ function task(overrides: Partial<BackgroundTaskForUi> = {}): BackgroundTaskForUi
 	};
 }
 
-function manager(options: Partial<ConstructorParameters<typeof BackgroundTasksManager>[3]> = {}, tasks: BackgroundTaskForUi[] = [task()], terminal: { columns?: number; rows?: number } = {}) {
+function manager(
+	options: Partial<ConstructorParameters<typeof BackgroundTasksManager>[3]> = {},
+	tasks: BackgroundTaskForUi[] = [task()],
+	terminal: { columns?: number; rows?: number } = {},
+	backgroundColor?: RgbColor,
+	managerTheme: Theme = theme,
+) {
 	let closed = false;
 	let renders = 0;
 	const stopped: string[] = [];
 	const paths: string[] = [];
 	const seen = new Set<string>();
+	const tui = {
+		requestRender: () => { renders++; },
+		terminal,
+		...(backgroundColor ? { queryTerminalBackgroundColor: async () => backgroundColor } : {}),
+	};
 	const instance = new BackgroundTasksManager(
-		{ requestRender: () => { renders++; }, terminal },
-		theme,
+		tui,
+		managerTheme,
 		() => { closed = true; },
 		{
 			getTasks: () => tasks,
@@ -78,7 +92,149 @@ function assertWidth(lines: string[], width: number) {
 	for (const line of lines) assert.ok(visibleWidth(stripAnsi(line)) <= width, line);
 }
 
+function assertExplicitBackground(lines: string[]) {
+	const sgrPattern = /\x1b\[([0-9;]*)m/g;
+	for (const line of lines) {
+		let backgroundActive = false;
+		let offset = 0;
+		for (const match of line.matchAll(sgrPattern)) {
+			const index = match.index ?? 0;
+			if (visibleWidth(line.slice(offset, index)) > 0) assert.equal(backgroundActive, true, line);
+			const params = (match[1] || "0").split(";").map(Number);
+			for (let paramIndex = 0; paramIndex < params.length; paramIndex++) {
+				const param = params[paramIndex];
+				if (param === 38 || param === 48) {
+					if (param === 48) backgroundActive = true;
+					const mode = params[paramIndex + 1];
+					if (mode === 2) paramIndex += 4;
+					else if (mode === 5) paramIndex += 2;
+					continue;
+				}
+				if (param === 0 || param === 49) backgroundActive = false;
+				if ((param >= 40 && param <= 47) || (param >= 100 && param <= 107)) backgroundActive = true;
+			}
+			offset = index + match[0].length;
+		}
+		if (visibleWidth(line.slice(offset)) > 0) assert.equal(backgroundActive, true, line);
+	}
+}
+
 describe("BackgroundTasksManager component", () => {
+	it("allocates only the opaque dock so the overlay compositor preserves surrounding backdrop", async () => {
+		assert.equal(BACKGROUND_TASKS_OVERLAY_OPTIONS.width, 118);
+		assert.equal(BACKGROUND_TASKS_OVERLAY_OPTIONS.anchor, "bottom-center");
+		assert.deepEqual(BACKGROUND_TASKS_OVERLAY_OPTIONS.margin, { bottom: 1 });
+		const dir = await mkdtemp(join(tmpdir(), "pi-bg-opaque-"));
+		try {
+			const outputAbsPath = join(dir, "task.output");
+			await writeFile(outputAbsPath, "\x1b[31mred\x1b[0m after reset\n\x1b[44mblue background\x1b[49m after background reset\n", "utf8");
+			const h = manager({ initialTaskId: "b12345678" }, [task({ outputAbsPath, bytesWritten: 72 })]);
+			try {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				const lines = h.instance.render(118);
+				assert.ok(lines.every((line) => visibleWidth(line) === 118));
+				assert.match(stripAnsi(lines[0] ?? ""), /^╭.{116}╮$/);
+				assertExplicitBackground(lines);
+			} finally {
+				h.instance.dispose();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves SGR colors but strips interactive terminal controls from task output", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-bg-controls-"));
+		try {
+			const outputAbsPath = join(dir, "task.output");
+			const output = [
+				"\x1b[31mred\x1b[0m safe",
+				"\x1b[2Kerase\x1b[3Acursor-up",
+				"\x1b]0;hostile title\x07title-safe",
+				"\x1b[?25lhidden cursor\x1b[?25h",
+				"\x1bPpayload\x1b\\dcs-safe",
+			].join("\n");
+			await writeFile(outputAbsPath, output, "utf8");
+			const h = manager({ initialTaskId: "b12345678" }, [task({
+				name: "\x1b[2KControl task",
+				command: "\x1b]0;metadata title\x07printf safe",
+				outputAbsPath,
+				bytesWritten: Buffer.byteLength(output),
+			})]);
+			try {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				const rendered = h.instance.render(118).join("\n");
+				assert.match(rendered, /\x1b\[31mred/);
+				assert.match(stripAnsi(rendered), /Control task/);
+				assert.match(stripAnsi(rendered), /printf safe/);
+				assert.match(stripAnsi(rendered), /erasecursor-up/);
+				assert.match(stripAnsi(rendered), /title-safe/);
+				assert.match(stripAnsi(rendered), /hidden cursor/);
+				assert.match(stripAnsi(rendered), /dcs-safe/);
+				assert.doesNotMatch(rendered, /\x1b\[(?:2K|3A|\?25[lh])/);
+				assert.doesNotMatch(rendered, /\x1b(?:\]|P)/);
+			} finally {
+				h.instance.dispose();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps multiline command metadata inside rendered rows", async () => {
+		const h = manager({ initialTaskId: "b12345678" }, [task({ command: "python3 - <<'PY'\nprint('probe')\nPY" })]);
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			const lines = h.instance.render(118);
+			assert.ok(lines.every((line) => !/[\r\n]/.test(line)), "rendered row contains an embedded line break");
+			assert.ok(lines.every((line) => visibleWidth(line) === 118), "multiline metadata changed rendered row width");
+			assert.match(stripAnsi(lines.join("\n")), /python3 - <<'PY' print\('probe'\) PY/);
+		} finally {
+			h.instance.dispose();
+		}
+	});
+
+	it("uses an opaque near-match instead of Kitty's transparent terminal base color", async () => {
+		const h = manager({}, [task()], {}, { r: 30, g: 35, b: 38 });
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const transparentTerminalBackground = "\x1b[48;2;30;35;38m";
+			const opaqueNearMatch = "\x1b[48;2;30;35;39m";
+			const lines = h.instance.render(118);
+			assert.ok(lines.every((line) => line.startsWith(opaqueNearMatch)));
+			assert.ok(lines.every((line) => !line.startsWith(transparentTerminalBackground)));
+			assert.ok(h.renders > 0);
+		} finally {
+			h.instance.dispose();
+		}
+	});
+
+	it("chooses a distinct opaque palette color in 256-color mode", async () => {
+		const h = manager({}, [task()], {}, { r: 0, g: 0, b: 0 }, makeTheme("256color"));
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			assert.ok(h.instance.render(118).every((line) => line.startsWith("\x1b[48;5;232m")));
+		} finally {
+			h.instance.dispose();
+		}
+	});
+
+	it("covers every allocated width while capping the visual dock at 118 columns", () => {
+		const h = manager();
+		try {
+			for (let width = 2; width <= 240; width++) {
+				const boxWidth = Math.min(width, 118);
+				const lines = h.instance.render(width);
+				assert.ok(lines.every((line) => visibleWidth(line) === boxWidth), `width ${width}`);
+				const top = stripAnsi(lines[0] ?? "");
+				assert.equal(top[0], "╭", `left border ${width}`);
+				assert.equal(top[boxWidth - 1], "╮", `right border ${width}`);
+			}
+		} finally {
+			h.instance.dispose();
+		}
+	});
+
 	it("renders list within width and handles selection/actions", async () => {
 		const baseTime = Date.now();
 		const tasks = [

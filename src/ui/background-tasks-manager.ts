@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { formatSize } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth, type Component, type OverlayOptions, type RgbColor, type TUI } from "@earendil-works/pi-tui";
 import {
 	boundedRead,
 	compactWhitespace,
@@ -12,9 +12,21 @@ import {
 	type BgTaskSnapshot,
 } from "../core/common.js";
 
+const MAX_DOCK_WIDTH = 118;
+
+export const BACKGROUND_TASKS_OVERLAY_OPTIONS = {
+	anchor: "bottom-center",
+	width: MAX_DOCK_WIDTH,
+	minWidth: 64,
+	maxHeight: "100%",
+	margin: { bottom: 1 },
+} satisfies OverlayOptions;
+
 export type BackgroundTaskForUi = BgTaskSnapshot & { name: string; outputAbsPath: string };
 type BgTask = BackgroundTaskForUi;
-type TaskManagerTui = Pick<TUI, "requestRender"> & { terminal?: Partial<Pick<TUI["terminal"], "columns" | "rows">> };
+type TaskManagerTui = Pick<TUI, "requestRender"> & Partial<Pick<TUI, "queryTerminalBackgroundColor">> & {
+	terminal?: Partial<Pick<TUI["terminal"], "columns" | "rows">>;
+};
 
 const STATUS_INTERVAL_MS = 1000;
 // Detail-view scrollback reservoir. Larger than the model-facing log cap because
@@ -32,14 +44,152 @@ const MIN_DETAIL_LINES = 1;
 const MIN_OUTPUT_LINES = 1;
 const BORDER_COLOR: ThemeColor | `#${string}` = "accent";
 const ANSI_FG_RESET = "\x1b[39m";
+const ANSI_BG_RESET = "\x1b[49m";
+const ANSI_SGR_PATTERN = /\x1b\[([0-9;]*)m/g;
+
+function sgrResetsBackground(paramsText: string): boolean {
+	let explicitBackground: boolean | undefined;
+	const params = (paramsText || "0").split(";").map(Number);
+	for (let index = 0; index < params.length; index++) {
+		const param = params[index];
+		if (param === undefined) continue;
+		if (param === 38 || param === 48) {
+			if (param === 48) explicitBackground = true;
+			const mode = params[index + 1];
+			if (mode === 2) index += 4;
+			else if (mode === 5) index += 2;
+			continue;
+		}
+		if (param === 0 || param === 49) explicitBackground = false;
+		if ((param >= 40 && param <= 47) || (param >= 100 && param <= 107)) explicitBackground = true;
+	}
+	return explicitBackground === false;
+}
+
+function colorDistance(left: RgbColor, right: RgbColor): number {
+	return (left.r - right.r) ** 2 + (left.g - right.g) ** 2 + (left.b - right.b) ** 2;
+}
+
+/** Kitty makes cells matching the default background transparent; choose the nearest distinct color. */
+function terminalBackgroundAnsi(color: RgbColor, mode: ReturnType<Theme["getColorMode"]>): string {
+	if (mode === "truecolor") {
+		const blue = color.b < 255 ? color.b + 1 : color.b - 1;
+		return `\x1b[48;2;${color.r};${color.g};${blue}m`;
+	}
+
+	const candidates: Array<{ index: number; color: RgbColor }> = [];
+	const levels = [0, 95, 135, 175, 215, 255];
+	for (let red = 0; red < levels.length; red++) {
+		for (let green = 0; green < levels.length; green++) {
+			for (let blue = 0; blue < levels.length; blue++) {
+				candidates.push({
+					index: 16 + 36 * red + 6 * green + blue,
+					color: { r: levels[red] ?? 0, g: levels[green] ?? 0, b: levels[blue] ?? 0 },
+				});
+			}
+		}
+	}
+	for (let offset = 0; offset < 24; offset++) {
+		const level = 8 + offset * 10;
+		candidates.push({ index: 232 + offset, color: { r: level, g: level, b: level } });
+	}
+	const nearest = candidates
+		.filter((candidate) => colorDistance(candidate.color, color) > 0)
+		.sort((left, right) => colorDistance(left.color, color) - colorDistance(right.color, color))[0];
+	return `\x1b[48;5;${nearest?.index ?? 232}m`;
+}
+
+function applyOpaqueBackground(background: string, line: string): string {
+	return `${background}${line.replace(ANSI_SGR_PATTERN, (sequence, params: string) =>
+		sgrResetsBackground(params) ? `${sequence}${background}` : sequence)}${ANSI_BG_RESET}`;
+}
 
 function formatTime(timestamp: number): string {
 	return new Date(timestamp).toLocaleTimeString();
 }
 
-/** Normalize raw output bytes into display lines, dropping only the trailing empty line from a final newline. */
+function skipTerminalControlString(value: string, start: number): number {
+	for (let index = start; index < value.length; index++) {
+		const code = value.charCodeAt(index);
+		if (code === 0x07 || code === 0x9c) return index + 1;
+		if (code === 0x1b && value[index + 1] === "\\") return index + 2;
+	}
+	return value.length;
+}
+
+/** Keep printable text and SGR styling while removing controls that can mutate the host terminal. */
+function sanitizeTerminalOutput(content: string): string {
+	const value = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	let result = "";
+	for (let index = 0; index < value.length;) {
+		const code = value.charCodeAt(index);
+		if (code === 0x1b) {
+			const kind = value[index + 1];
+			if (kind === "[") {
+				let end = index + 2;
+				while (end < value.length) {
+					const finalByte = value.charCodeAt(end);
+					if (finalByte >= 0x40 && finalByte <= 0x7e) break;
+					end++;
+				}
+				if (end < value.length) {
+					const sequence = value.slice(index, end + 1);
+					if (/^\x1b\[[0-9;]*m$/.test(sequence)) result += sequence;
+					index = end + 1;
+				} else {
+					index = value.length;
+				}
+				continue;
+			}
+			if (kind === "]" || kind === "P" || kind === "X" || kind === "^" || kind === "_") {
+				index = skipTerminalControlString(value, index + 2);
+				continue;
+			}
+			let end = index + 1;
+			while (end < value.length) {
+				const intermediate = value.charCodeAt(end);
+				if (intermediate < 0x20 || intermediate > 0x2f) break;
+				end++;
+			}
+			index = Math.min(value.length, end + 1);
+			continue;
+		}
+		if (code === 0x9b) {
+			let end = index + 1;
+			while (end < value.length) {
+				const finalByte = value.charCodeAt(end);
+				if (finalByte >= 0x40 && finalByte <= 0x7e) break;
+				end++;
+			}
+			if (end < value.length) {
+				const params = value.slice(index + 1, end);
+				if (value[end] === "m" && /^[0-9;]*$/.test(params)) result += `\x1b[${params}m`;
+				index = end + 1;
+			} else {
+				index = value.length;
+			}
+			continue;
+		}
+		if (code === 0x90 || code === 0x98 || code === 0x9d || code === 0x9e || code === 0x9f) {
+			index = skipTerminalControlString(value, index + 1);
+			continue;
+		}
+		if (code === 0x0a) result += "\n";
+		else if (code === 0x09) result += "    ";
+		else if (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f)) result += value[index];
+		index++;
+	}
+	return result;
+}
+
+/** Enforce one physical terminal row before width calculations and framing. */
+function sanitizeTerminalRow(content: string): string {
+	return sanitizeTerminalOutput(content).replace(/\n/g, " ");
+}
+
+/** Normalize safe task output into display lines, dropping only the trailing empty line from a final newline. */
 function toOutputLines(content: string): string[] {
-	return content.replace(/\r/g, "").split("\n").filter((line, index, array) => line.length > 0 || index < array.length - 1);
+	return sanitizeTerminalOutput(content).split("\n").filter((line, index, array) => line.length > 0 || index < array.length - 1);
 }
 
 function padAnsi(value: string, width: number): string {
@@ -201,6 +351,8 @@ export class BackgroundTasksManager implements Component {
 	private confirmStopAllArmed = false;
 	private readonly lastBytesByTask = new Map<string, number>();
 	private readonly recentActivityByTask = new Map<string, { delta: number; timestamp: number }>();
+	private backgroundAnsi: string;
+	private disposed = false;
 	private refreshTimer: NodeJS.Timeout;
 
 	constructor(
@@ -209,6 +361,14 @@ export class BackgroundTasksManager implements Component {
 		private readonly done: (result: TaskManagerResult) => void,
 		private readonly options: TaskManagerOptions,
 	) {
+		this.backgroundAnsi = theme.getBgAnsi("userMessageBg");
+		if (tui.queryTerminalBackgroundColor) {
+			void tui.queryTerminalBackgroundColor({ timeoutMs: 200 }).then((color) => {
+				if (!color || this.disposed) return;
+				this.backgroundAnsi = terminalBackgroundAnsi(color, theme.getColorMode());
+				this.tui.requestRender();
+			}, () => {});
+		}
 		if (options.initialTaskId) {
 			this.detailTaskId = options.initialTaskId;
 			this.mode = "detail";
@@ -227,6 +387,7 @@ export class BackgroundTasksManager implements Component {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		clearInterval(this.refreshTimer);
 	}
 
@@ -250,8 +411,9 @@ export class BackgroundTasksManager implements Component {
 	}
 
 	render(width: number): string[] {
-		const boxWidth = Math.max(2, Math.min(width, 118));
-		return this.mode === "detail" ? this.renderDetail(boxWidth) : this.renderList(boxWidth);
+		const boxWidth = Math.max(2, Math.min(width, MAX_DOCK_WIDTH));
+		const lines = this.mode === "detail" ? this.renderDetail(boxWidth) : this.renderList(boxWidth);
+		return lines.map((line) => applyOpaqueBackground(this.backgroundAnsi, sanitizeTerminalRow(line)));
 	}
 
 	private maxOverlayLines(minLines: number): number {
@@ -538,11 +700,11 @@ export class BackgroundTasksManager implements Component {
 	}
 
 	private frame(title: string, subtitle: string, body: string[], footer: string, width: number): string[] {
-		const inner = Math.max(1, width - 2);
+		const inner = Math.max(0, width - 2);
 		const border = (value: string) => colorText(this.theme, BORDER_COLOR, value);
 		const top = border(`╭${"─".repeat(inner)}╮`);
 		const bottom = border(`╰${"─".repeat(inner)}╯`);
-		const row = (content = "") => `${border("│")}${padAnsi(truncateToWidth(content, inner), inner)}${border("│")}`;
+		const row = (content = "") => `${border("│")}${padAnsi(truncateToWidth(sanitizeTerminalRow(content), inner), inner)}${border("│")}`;
 		const header = this.theme.fg("accent", this.theme.bold(padAnsi(` ${title}`, inner)));
 		const subtitleLine = subtitle ? this.theme.fg("muted", padAnsi(` ${subtitle}`, inner)) : " ".repeat(inner);
 		const lines = [top, row(header), row(subtitleLine), row()];
@@ -698,7 +860,7 @@ export class BackgroundTasksManager implements Component {
 		const border = (value: string) => colorText(this.theme, BORDER_COLOR, value);
 		const top = ` ${border(`╭${"─".repeat(inner)}╮`)}`;
 		const bottom = ` ${border(`╰${"─".repeat(inner)}╯`)}`;
-		const row = (content = "") => ` ${border("│")}${padAnsi(truncateToWidth(content, inner), inner)}${border("│")}`;
+		const row = (content = "") => ` ${border("│")}${padAnsi(truncateToWidth(sanitizeTerminalRow(content), inner), inner)}${border("│")}`;
 		const lines = [top];
 		if (this.tailError) {
 			lines.push(row(this.theme.fg("error", this.tailError)));

@@ -24,7 +24,7 @@ import {
 } from "./core/common.js";
 import { fetchLatestVersion, readPackageInfo, type FetchLatestVersionOptions } from "./core/update-check.js";
 import { BackgroundTaskRegistry, commandMayLaunchPiAgent } from "./core/registry.js";
-import { BackgroundTasksManager, type BackgroundTaskForUi, type TaskManagerResult } from "./ui/background-tasks-manager.js";
+import { BACKGROUND_TASKS_OVERLAY_OPTIONS, BackgroundTasksManager, type BackgroundTaskForUi, type TaskManagerResult } from "./ui/background-tasks-manager.js";
 
 /**
  * Project-local Pi background task manager.
@@ -233,7 +233,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 				},
 				{
 					overlay: true,
-					overlayOptions: { anchor: "bottom-center", width: "96%", minWidth: 64, maxHeight: "100%", margin: { bottom: 1, left: 1, right: 1 } },
+					overlayOptions: BACKGROUND_TASKS_OVERLAY_OPTIONS,
 				},
 			);
 		} finally {
