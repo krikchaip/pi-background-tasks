@@ -14,6 +14,10 @@ const extensionPath = resolve("extensions/background-tasks.ts");
 const scriptedProviderPath = resolve("tests/scripted-provider/scripted-provider-extension.ts");
 const roots: string[] = [];
 
+function stripSgr(value: string): string {
+	return value.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
@@ -491,7 +495,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			const done = await exec(session, "bg_run", { isAgent: false, name: "Footer Done", command: "printf done", notifyOnCompletion: false, triggerOnCompletion: false });
 			await wait(session, done.details.task.id);
 			await new Promise((r) => setTimeout(r, 20));
-			assert.match(statuses.at(-1) ?? "", /bg 1 done · Shift↓ · \/bg-clear/);
+			assert.match(statuses.at(-1) ?? "", /bg 1✓/);
 
 			const shortcuts = session.extensionRunner.getShortcuts(new Map());
 			assert.ok(shortcuts.has("ctrl+alt+c"));
@@ -505,10 +509,10 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			const secondDone = await exec(session, "bg_run", { isAgent: false, name: "Footer Done Two", command: "printf two", notifyOnCompletion: false, triggerOnCompletion: false });
 			await wait(session, secondDone.details.task.id);
 			await new Promise((r) => setTimeout(r, 20));
-			assert.match(statuses.at(-1) ?? "", /1 running · 1 done · Shift↓ · \/bg-clear/);
+			assert.match(statuses.at(-1) ?? "", /bg 1▶ 1✓/);
 			await clearCommand.handler("", session.extensionRunner.createContext());
-			assert.match(statuses.at(-1) ?? "", /bg 1 running · Shift↓/);
-			assert.doesNotMatch(statuses.at(-1) ?? "", /done|\/bg-clear/);
+			assert.match(statuses.at(-1) ?? "", /bg 1▶/);
+			assert.doesNotMatch(statuses.at(-1) ?? "", /✓/);
 			await exec(session, "bg_kill", { taskId: running.details.task.id });
 		} finally {
 			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
@@ -542,6 +546,12 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			addAutocompleteProvider: () => {},
 			setEditor: () => {},
 			custom: async () => undefined,
+			theme: {
+				fg: (color: string, text: string) => {
+					const code = { accent: 36, error: 31, warning: 33, success: 32 }[color] ?? 37;
+					return `\x1b[${code}m${text}\x1b[39m`;
+				},
+			} as never,
 		};
 		session.extensionRunner.setUIContext(ui);
 		try {
@@ -553,14 +563,21 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			const done = await exec(session, "bg_run", { isAgent: false, name: "Footer Done Matrix", command: "printf done", notifyOnCompletion: false, triggerOnCompletion: false });
 			await wait(session, done.details.task.id);
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.match(statuses.at(-1) ?? "", /1 failed · 1 stopped · 1 done · Shift↓ · \/bg-clear/);
+			const finishedFooter = statuses.at(-1) ?? "";
+			assert.match(finishedFooter, /\x1b\[38;2;0;175;175m bg \x1b\[0m/);
+			assert.match(stripSgr(finishedFooter), /bg 1✗ 1■ 1✓/);
+			assert.match(finishedFooter, /\x1b\[31m1✗\x1b\[39m/);
+			assert.match(finishedFooter, /\x1b\[33m1■\x1b\[39m/);
+			assert.match(finishedFooter, /\x1b\[32m1✓\x1b\[39m/);
 
 			const running = await exec(session, "bg_run", { isAgent: false, name: "Footer Focused", command: "sleep 10", notifyOnCompletion: false, triggerOnCompletion: false });
 			await new Promise((resolve) => setTimeout(resolve, 30));
-			assert.match(statuses.at(-1) ?? "", /1 running · 1 failed · 1 stopped · 1 done · Shift↓ · \/bg-clear/);
+			const mixedFooter = statuses.at(-1) ?? "";
+			assert.match(stripSgr(mixedFooter), /bg 1▶ 1✗ 1■ 1✓/);
+			assert.match(mixedFooter, /\x1b\[36m1▶\x1b\[39m/);
 			const shortcuts = session.extensionRunner.getShortcuts(new Map());
 			await shortcuts.get("shift+down")!.handler(session.extensionRunner.createContext());
-			assert.ok(statuses.some((status) => /bg 1 running · 1 failed · 1 stopped · 1 done · focused/.test(status ?? "")));
+			assert.ok(statuses.some((status) => /bg 1▶ 1✗ 1■ 1✓/.test(stripSgr(status ?? ""))));
 			await exec(session, "bg_kill", { taskId: running.details.task.id });
 			assert.equal(notifications.length >= 0, true);
 		} finally {
@@ -649,7 +666,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
 			// Append-to-active-footer path: segment trails the running/entry-hint status.
 			const running = await exec(session, "bg_run", { isAgent: false, name: "Update Footer Running", command: "sleep 10", notifyOnCompletion: false, triggerOnCompletion: false });
 			await renderFooterViaJobs(session);
-			assert.match(statuses.at(-1) ?? "", /bg 1 running · Shift↓ · \u2b06 v999\.0\.0 \/bg-update/);
+			assert.match(statuses.at(-1) ?? "", /bg 1▶ · \u2b06 v999\.0\.0 \/bg-update/);
 			await exec(session, "bg_kill", { taskId: running.details.task.id });
 
 			const updateCommand = session.extensionRunner.getRegisteredCommands().find((cmd) => cmd.invocationName === "bg-update");

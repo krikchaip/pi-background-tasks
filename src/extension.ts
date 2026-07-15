@@ -45,7 +45,7 @@ const packageInfo = readPackageInfo(new URL("../package.json", import.meta.url),
 });
 const PACKAGE_NAME = packageInfo.name ?? "pi-background-tasks";
 const PACKAGE_VERSION = packageInfo.version;
-const STATUS_COLOR: ThemeColor | `#${string}` = "#00afaf";
+const FOOTER_LABEL_FG = "\x1b[38;2;0;175;175m";
 const ANSI_RESET = "\x1b[0m";
 // pi-cc-tools' default fixed tool-branch color; Pi exposes no shared token for it.
 const TOOL_BRANCH_FG = "\x1b[38;2;72;72;72m";
@@ -91,21 +91,16 @@ function renderBackgroundTaskNotification(task: BgTaskSnapshot | undefined, them
 	return new Text(` ${headline}\n ${TOOL_BRANCH_FG}└─${ANSI_FG_RESET} ${detail}`, 0, 0);
 }
 
-function isHexColor(color: ThemeColor | `#${string}`): color is `#${string}` {
-	return color.startsWith("#");
+function footerLabel(value: string): string {
+	return `${FOOTER_LABEL_FG}${value}${ANSI_RESET}`;
 }
 
-function hexFg(hex: `#${string}`, value: string): string {
-	const color = hex.slice(1);
-	const r = parseInt(color.slice(0, 2), 16);
-	const g = parseInt(color.slice(2, 4), 16);
-	const b = parseInt(color.slice(4, 6), 16);
-	return `\x1b[38;2;${r};${g};${b}m${value}${ANSI_RESET}`;
+function footerText(theme: Theme | undefined, color: ThemeColor, value: string): string {
+	return theme ? theme.fg(color, value) : value;
 }
 
-function statusText(theme: Theme | undefined, value: string): string {
-	if (isHexColor(STATUS_COLOR)) return hexFg(STATUS_COLOR, value);
-	return theme ? theme.fg(STATUS_COLOR, value) : value;
+function footerStatus(theme: Theme | undefined, status: BgTaskSnapshot["status"], value: string): string {
+	return footerText(theme, notificationColor(status), value);
 }
 
 function textContent(text: string) {
@@ -197,20 +192,20 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 			const updateSegment = formatUpdateSegment(latestKnownVersion, PACKAGE_VERSION ?? "");
 			ctx.ui.setWidget("background-tasks", undefined);
 			if (running.length === 0 && unseenFinishedCount === 0) {
-				ctx.ui.setStatus("background-tasks", updateSegment ? statusText(ctx.ui.theme, ` bg ${updateSegment} `) : undefined);
+				ctx.ui.setStatus("background-tasks", updateSegment ? `${footerLabel(" bg ")}${footerText(ctx.ui.theme, "accent", updateSegment)} ` : undefined);
 				return;
 			}
 
 			const statuses = [
-				running.length > 0 ? `${running.length}▶` : undefined,
-				unseenFailed.length > 0 ? `${unseenFailed.length}✗` : undefined,
-				unseenStopped.length > 0 ? `${unseenStopped.length}■` : undefined,
-				unseenDone.length > 0 ? `${unseenDone.length}✓` : undefined,
+				running.length > 0 ? footerStatus(ctx.ui.theme, "running", `${running.length}▶`) : undefined,
+				unseenFailed.length > 0 ? footerStatus(ctx.ui.theme, "failed", `${unseenFailed.length}✗`) : undefined,
+				unseenStopped.length > 0 ? footerStatus(ctx.ui.theme, "killed", `${unseenStopped.length}■`) : undefined,
+				unseenDone.length > 0 ? footerStatus(ctx.ui.theme, "completed", `${unseenDone.length}✓`) : undefined,
 			].filter((status): status is string => status !== undefined).join(" ");
 			const segments = [statuses];
-			if (updateSegment) segments.push(updateSegment);
-			const label = ` bg ${segments.join(" · ")} `;
-			ctx.ui.setStatus("background-tasks", statusText(ctx.ui.theme, label));
+			if (updateSegment) segments.push(footerText(ctx.ui.theme, "accent", updateSegment));
+			const label = `${footerLabel(" bg ")}${segments.join(" · ")} `;
+			ctx.ui.setStatus("background-tasks", label);
 		} catch (error) {
 			console.error(`[background-tasks] UI update failed: ${error instanceof Error ? error.message : String(error)}`);
 			currentCtx = undefined;
