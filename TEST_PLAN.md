@@ -13,11 +13,11 @@ This package follows:
 | Package | `pi-background-tasks` |
 | Extension entrypoint | `extensions/background-tasks.ts` |
 | Public commands | `/bg`, `/jobs`, `/logs`, `/kill`, `/tasks`, `/bg-tasks`, `/bg-clear`, `/bg-update` |
-| Public tools | `bg_run`, `bg_status`, `bg_logs`, `bg_kill` |
+| Public tools | `bg_run`, `bg_run_pi_attested`, `bg_status`, `bg_logs`, `bg_kill` |
 | Shortcuts | `Shift+Down`; optional fallback `Ctrl+Alt+C` |
 | Custom UI | footer status + focused bottom dock overlay |
 | Custom provider | no |
-| Runtime files/state | `/tmp/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.output`, `/tmp/pi-bg-tasks/<session-id>-<pid>-<run-id>/<task-id>.json` |
+| Runtime files/state | `.pi/tasks/<session-id>-<pid>/<task-id>.output`, `.pi/tasks/<session-id>-<pid>/<task-id>.json`; attested Pi opt-in adds `.pi-events.jsonl`, `.stderr`, `.pi-telemetry-wrapper.cjs`, `.attestation.json` |
 
 ## Required gates
 
@@ -44,6 +44,7 @@ This package follows:
 | Kill running task | `/kill <id>` |  | yes | yes |  |  |  |  | SDK tool and RPC slash command. |
 | Open task manager fallback | `/tasks`, `/bg-tasks` |  |  | discovery | yes | yes |  |  | Component covers dock; PTY covers `/tasks` and `/bg-tasks`. |
 | Start background command from LLM tool | `bg_run` | yes | yes |  |  |  |  | yes | SDK starts named commands, verifies required `isAgent` schema/runtime behavior, and scripted provider verifies agent-loop tool calls with `isAgent:false` for scripts. |
+| Attested direct Pi producer | `bg_run_pi_attested` | yes | yes |  |  |  | type/schema |  | Unit covers 128-bit ids, exact direct argv, raw events/stderr, provider/model/session capture from Pi JSON, OAuth observation via ModelRegistry, prompt/report/source hash laws, completion visibility only after durable sidecar creation, malformed-event rejection, and no sidecar for ordinary tasks. SDK runs a fake Pi CLI through the public tool and verifies one complete flat attestation. |
 | Inspect task status | `bg_status` |  | yes |  |  |  |  |  | SDK polls exact IDs and validates shutdown state. |
 | Read task logs | `bg_logs` | yes | yes |  |  |  |  |  | SDK verifies content. |
 | Stop task from LLM tool | `bg_kill` |  | yes |  |  |  |  |  | Covers running kill and already-finished loud failure. |
@@ -64,8 +65,8 @@ This package follows:
 | Shortcut opens dock | `Shift+Down` |  | registration |  |  | yes |  |  | PTY sends xterm `ESC [ 1 ; 2 B`. |
 | Clear finished notices | `/bg-clear`, optional `Ctrl+Alt+C` fallback |  | yes | yes |  |  |  |  | `/bg-clear` is the canonical terminal-independent path and is advertised in the footer. SDK invokes the slash-command handler and verifies fallback shortcut registration; RPC verifies `/bg-clear` clears finished notices; finished notices remain until explicit clear. |
 | Update-available footer notice | `⬆ v<latest> /bg-update` footer segment + `/bg-update` command | yes | yes | yes |  |  |  |  | Unit covers semver parse/compare/precedence, `isNewerVersion`, `formatUpdateSegment`, npm/`package.json` payload narrowing, injected-fetch success/404/throw/timeout, and `package.json` read/degrade. SDK uses a localhost registry to verify the idle and append-to-active footer segment, `/bg-update` non-installing instructions, and that opt-out (`PI_BG_DISABLE_UPDATE_CHECK=1`), offline (`PI_OFFLINE=1`), already-current, and registry-failure paths render no segment and never throw. RPC verifies `/bg-update` discovery and offline non-installing instructions. The check is one-shot per `session_start`, time-boxed, offline-safe, and never runs on the status tick. |
-| Runtime output files | `/tmp/pi-bg-tasks/...output` | yes | yes |  |  |  |  |  | SDK asserts existence. |
-| Runtime metadata files | `/tmp/pi-bg-tasks/...json` | yes | yes |  |  |  |  |  | SDK asserts shape/status/name/context usage; registry unit tests cover metadata failure/update ordering. |
+| Runtime output files | `.pi/tasks/...output` | yes | yes |  |  |  |  |  | SDK asserts existence. |
+| Runtime metadata files | `.pi/tasks/...json` | yes | yes |  |  |  |  |  | SDK asserts shape/status/name/context usage; registry unit tests cover metadata failure/update ordering. |
 | Timeout kills task | `timeoutSeconds` |  | yes |  |  |  |  |  | SDK. |
 | Output cap kills task | `PI_BG_MAX_OUTPUT_BYTES` |  |  | yes |  |  |  |  | RPC runs with a low cap and asserts failed status/log notice. |
 | Shutdown cleanup | `session_shutdown` | yes | yes |  |  |  |  |  | SDK asserts multiple running tasks become killed; registry tests cover shared stop/wait behavior. |

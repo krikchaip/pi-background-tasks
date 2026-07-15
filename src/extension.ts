@@ -1,30 +1,46 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ThemeColor, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
-import { formatSize } from "@earendil-works/pi-coding-agent";
-import { Text, type KeyId } from "@earendil-works/pi-tui";
-import { Type, type Static } from "typebox";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+  Theme,
+  ThemeColor,
+  ToolRenderResultOptions,
+} from '@earendil-works/pi-coding-agent';
+import { formatSize } from '@earendil-works/pi-coding-agent';
+import { Text, type KeyId } from '@earendil-works/pi-tui';
+import { Type, type Static } from 'typebox';
 import {
-	DEFAULT_LOG_BYTES,
-	MAX_LOG_BYTES,
-	deriveTaskNameFromCommand,
-	formatSnapshotList,
-	formatUpdateSegment,
-	isNewerVersion,
-	normalizeMaxBytes,
-	normalizeTaskName,
-	parseBgCommandArgs,
-	taskDisplayName,
-	truncateChars,
-	type BgKillDetails,
-	type BgLogsDetails,
-	type BgRunDetails,
-	type BgStatusDetails,
-	type BgTask,
-	type BgTaskSnapshot,
-	type StartTaskOptions,
-} from "./core/common.js";
-import { fetchLatestVersion, readPackageInfo, type FetchLatestVersionOptions } from "./core/update-check.js";
-import { BackgroundTaskRegistry, commandMayLaunchPiAgent } from "./core/registry.js";
-import { BACKGROUND_TASKS_OVERLAY_OPTIONS, BackgroundTasksManager, type BackgroundTaskForUi, type TaskManagerResult } from "./ui/background-tasks-manager.js";
+  DEFAULT_LOG_BYTES,
+  MAX_LOG_BYTES,
+  deriveTaskNameFromCommand,
+  formatSnapshotList,
+  formatUpdateSegment,
+  isNewerVersion,
+  normalizeMaxBytes,
+  normalizeTaskName,
+  parseBgCommandArgs,
+  taskDisplayName,
+  truncateChars,
+  type BgKillDetails,
+  type BgLogsDetails,
+  type BgRunDetails,
+  type BgStatusDetails,
+  type BgTask,
+  type BgTaskSnapshot,
+  type StartAttestedPiTaskOptions,
+  type StartTaskOptions,
+} from './core/common.js';
+import {
+  fetchLatestVersion,
+  readPackageInfo,
+  type FetchLatestVersionOptions,
+} from './core/update-check.js';
+import { BackgroundTaskRegistry } from './core/registry.js';
+import {
+  BackgroundTasksManager,
+  type BackgroundTaskForUi,
+  type TaskManagerResult,
+} from './ui/background-tasks-manager.js';
 
 /**
  * Project-local Pi background task manager.
@@ -38,563 +54,817 @@ import { BACKGROUND_TASKS_OVERLAY_OPTIONS, BackgroundTasksManager, type Backgrou
 
 const STATUS_INTERVAL_MS = 1000;
 const COMMAND_PREVIEW_CHARS = 90;
-const GIT_INSTALL_TARGET = "git:github.com/ismailsaleekh/pi-background-tasks";
+const GIT_INSTALL_TARGET = 'git:github.com/ismailsaleekh/pi-background-tasks';
 
-const packageInfo = readPackageInfo(new URL("../package.json", import.meta.url), (error) => {
-	console.error(`[background-tasks] failed to read package version: ${error.message}`);
+const packageInfo = readPackageInfo(new URL('../package.json', import.meta.url), (error) => {
+  console.error(`[background-tasks] failed to read package version: ${error.message}`);
 });
-const PACKAGE_NAME = packageInfo.name ?? "pi-background-tasks";
+const PACKAGE_NAME = packageInfo.name ?? 'pi-background-tasks';
 const PACKAGE_VERSION = packageInfo.version;
-const FOOTER_LABEL_FG = "\x1b[38;2;0;175;175m";
-const ANSI_RESET = "\x1b[0m";
-// pi-cc-tools' default fixed tool-branch color; Pi exposes no shared token for it.
-const TOOL_BRANCH_FG = "\x1b[38;2;72;72;72m";
-const ANSI_FG_RESET = "\x1b[39m";
+const LIGHT_BLUE_BG = '\x1b[48;2;183;223;255m';
+const LIGHT_BLUE_FG = '\x1b[38;2;11;70;110m';
+const ANSI_RESET = '\x1b[0m';
 
-function notificationColor(status: BgTaskSnapshot["status"]): ThemeColor {
-	if (status === "completed") return "success";
-	if (status === "failed") return "error";
-	if (status === "killed") return "warning";
-	return "accent";
-}
-
-function notificationLabel(status: BgTaskSnapshot["status"]): string {
-	if (status === "killed") return "Stopped";
-	return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
-}
-
-function notificationIcon(status: BgTaskSnapshot["status"]): string {
-	if (status === "completed") return "✓";
-	if (status === "failed") return "✗";
-	if (status === "killed") return "■";
-	return "●";
-}
-
-function notificationDuration(task: BgTaskSnapshot | undefined): string {
-	if (!task?.endTime) return "—";
-	const milliseconds = Math.max(0, task.endTime - task.startTime);
-	if (milliseconds < 60_000) return `${Math.max(0.1, Math.round(milliseconds / 100) / 10)}s`;
-	return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`;
-}
-
-function notificationOutputSize(task: BgTaskSnapshot | undefined): string {
-	return task?.bytesWritten ? formatSize(task.bytesWritten) : "no output";
-}
-
-function renderBackgroundTaskNotification(task: BgTaskSnapshot | undefined, theme: Theme): Text {
-	const status = task?.status ?? "completed";
-	const exitCode = status === "failed" && task?.exitCode !== undefined && task.exitCode !== null ? ` · exit ${task.exitCode}` : "";
-	const name = truncateChars(task ? taskDisplayName(task) : "Background task", 48);
-	const headline = `${theme.fg(notificationColor(status), theme.bold(`${notificationIcon(status)} ${notificationLabel(status)}${exitCode}`))} ${theme.fg("customMessageText", name)}`;
-	const logs = theme.fg("dim", `/logs ${task?.id ?? "background task"}`);
-	const detail = theme.fg("dim", `${notificationDuration(task)} · ${notificationOutputSize(task)} · `) + logs;
-	return new Text(` ${headline}\n ${TOOL_BRANCH_FG}└─${ANSI_FG_RESET} ${detail}`, 0, 0);
-}
-
-function footerLabel(value: string): string {
-	return `${FOOTER_LABEL_FG}${value}${ANSI_RESET}`;
-}
-
-function footerText(theme: Theme | undefined, color: ThemeColor, value: string): string {
-	return theme ? theme.fg(color, value) : value;
-}
-
-function footerStatus(theme: Theme | undefined, status: BgTaskSnapshot["status"], value: string): string {
-	return footerText(theme, notificationColor(status), value);
+function lightBlue(value: string): string {
+  return `${LIGHT_BLUE_BG}${LIGHT_BLUE_FG}${value}${ANSI_RESET}`;
 }
 
 function textContent(text: string) {
-	return [{ type: "text" as const, text }];
+  return [{ type: 'text' as const, text }];
 }
 
-type TextToolResult = { content?: readonly { type: string; text?: string }[] };
+interface TextToolResult {
+  content?: ReadonlyArray<{ type: string; text?: string }>;
+}
+
+interface BgToolArgumentRecord {
+  readonly command?: unknown;
+  readonly name?: unknown;
+  readonly description?: unknown;
+  readonly isAgent?: unknown;
+  readonly timeoutSeconds?: unknown;
+  readonly notifyOnCompletion?: unknown;
+  readonly triggerOnCompletion?: unknown;
+}
+
+interface BgPiAttestedArgumentRecord {
+  readonly name?: unknown;
+  readonly provider?: unknown;
+  readonly model?: unknown;
+  readonly prompt?: unknown;
+  readonly reportPath?: unknown;
+  readonly extraPiArgs?: unknown;
+  readonly thinking?: unknown;
+  readonly timeoutSeconds?: unknown;
+}
+
+function optionalTrimmed(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 const BgRunParams = Type.Object({
-	name: Type.String({ description: "Short human-readable task name shown in the bg footer dock. Required; use 2-6 words, not the raw command." }),
-	command: Type.String({ description: "Shell command to start in the background" }),
-	description: Type.Optional(Type.String({ description: "Optional longer human-readable context for the task" })),
-	timeoutSeconds: Type.Optional(Type.Number({ description: "Optional timeout; task is failed and killed when exceeded" })),
-	notifyOnCompletion: Type.Optional(Type.Boolean({ description: "Whether to show a completion notification. Default: true." })),
-	triggerOnCompletion: Type.Optional(Type.Boolean({ description: "Whether completion should trigger a follow-up agent turn. Default: true for bg_run." })),
+  name: Type.String({
+    description:
+      'Short human-readable task name shown in the bg footer dock. Required; use 2-6 words, not the raw command.',
+  }),
+  command: Type.String({ description: 'Shell command to start in the background' }),
+  isAgent: Type.Boolean({
+    description:
+      'Required. Set true only when this background task launches an LLM/agent process, such as a child `pi -p ...` or `pi --mode json ...`, so Pi-agent telemetry can be collected. Set false for scripts, tests, servers, sleeps, and ordinary shell commands.',
+  }),
+  description: Type.Optional(
+    Type.String({ description: 'Optional longer human-readable context for the task' }),
+  ),
+  timeoutSeconds: Type.Optional(
+    Type.Number({ description: 'Optional timeout; task is failed and killed when exceeded' }),
+  ),
+  notifyOnCompletion: Type.Optional(
+    Type.Boolean({ description: 'Whether to show a completion notification. Default: true.' }),
+  ),
+  triggerOnCompletion: Type.Optional(
+    Type.Boolean({
+      description:
+        'Whether completion should trigger a follow-up agent turn. Default: true for bg_run.',
+    }),
+  ),
+});
+
+const BgPiAttestedParams = Type.Object({
+  name: Type.String({ description: 'Short human-readable name for this attested Pi task.' }),
+  provider: Type.String({ description: 'Exact Pi provider to launch, for example openai-codex or anthropic.' }),
+  model: Type.String({ description: 'Exact provider-local Pi model id to launch.' }),
+  prompt: Type.String({ description: 'Prompt bytes passed as the single user prompt to Pi.' }),
+  reportPath: Type.String({ description: 'Relative path, inside the task cwd, that the child Pi run must write as its report.' }),
+  extraPiArgs: Type.Optional(Type.Array(Type.String({ description: 'Additional literal Pi argv entries; mode/provider/model/api-key args are rejected.' }))),
+  thinking: Type.Optional(Type.String({ description: 'Optional Pi thinking level argument.' })),
+  timeoutSeconds: Type.Optional(
+    Type.Number({ description: 'Optional timeout; task is failed and killed when exceeded' }),
+  ),
 });
 
 const BgStatusParams = Type.Object({
-	taskId: Type.Optional(Type.String({ description: "Optional task ID or unambiguous prefix. If omitted, all running/recent tasks are returned." })),
+  taskId: Type.Optional(
+    Type.String({
+      description:
+        'Optional task ID or unambiguous prefix. If omitted, all running/recent tasks are returned.',
+    }),
+  ),
 });
 
 const BgLogsParams = Type.Object({
-	taskId: Type.String({ description: "Task ID or unambiguous prefix" }),
-	maxBytes: Type.Optional(Type.Number({ description: `Maximum bytes to return, capped at ${formatSize(MAX_LOG_BYTES)}. Default: ${formatSize(DEFAULT_LOG_BYTES)}.` })),
-	tail: Type.Optional(Type.Boolean({ description: "Read the tail of the log when true, head when false. Default: true." })),
+  taskId: Type.String({ description: 'Task ID or unambiguous prefix' }),
+  maxBytes: Type.Optional(
+    Type.Number({
+      description: `Maximum bytes to return, capped at ${formatSize(MAX_LOG_BYTES)}. Default: ${formatSize(DEFAULT_LOG_BYTES)}.`,
+    }),
+  ),
+  tail: Type.Optional(
+    Type.Boolean({
+      description: 'Read the tail of the log when true, head when false. Default: true.',
+    }),
+  ),
 });
 
 const BgKillParams = Type.Object({
-	taskId: Type.String({ description: "Task ID or unambiguous prefix to stop" }),
+  taskId: Type.String({ description: 'Task ID or unambiguous prefix to stop' }),
 });
 
-type BgRunParamsValue = Static<typeof BgRunParams> & { isAgent?: boolean | undefined };
-type BgStatusParamsValue = Static<typeof BgStatusParams>;
-type BgLogsParamsValue = Static<typeof BgLogsParams>;
-type BgKillParamsValue = Static<typeof BgKillParams>;
+type BgRunParamsValue = Static<typeof BgRunParams>;
+type BgPiAttestedParamsValue = Static<typeof BgPiAttestedParams>;
 
-function renderPlainResult(result: TextToolResult, _options: ToolRenderResultOptions, _theme: Theme) {
-	const text = result.content?.map((part) => part.type === "text" ? (part.text ?? "") : "").join("\n") ?? "";
-	return new Text(text, 0, 0);
+function renderPlainResult(result: TextToolResult, options: ToolRenderResultOptions, theme: Theme) {
+  void options;
+  void theme;
+  const text =
+    result.content?.map((part) => (part.type === 'text' ? (part.text ?? '') : '')).join('\n') ?? '';
+  return new Text(text, 0, 0);
 }
 
 export default function backgroundTasksExtension(pi: ExtensionAPI): void {
-	const seenTaskIds = new Set<string>();
-	let currentCtx: ExtensionContext | undefined;
-	let statusInterval: NodeJS.Timeout | undefined;
-	let latestKnownVersion: string | undefined;
-	let updateCheckStarted = false;
+  const seenTaskIds = new Set<string>();
+  let currentCtx: ExtensionContext | undefined;
+  let dockOpen = false;
+  let statusInterval: NodeJS.Timeout | undefined;
+  let latestKnownVersion: string | undefined;
+  let updateCheckStarted = false;
 
-	const registry = new BackgroundTaskRegistry({
-		onChange: () => updateUi(),
-		sendCompletionNotification: (message, options) => {
-			pi.sendMessage(message, options);
-		},
-	});
+  const registry = new BackgroundTaskRegistry({
+    onChange: () => {
+      updateUi();
+    },
+    sendCompletionNotification: (message, options) => {
+      pi.sendMessage(message, options);
+    },
+  });
 
-	function unseenFinishedTasks(): BgTask[] {
-		return registry.allTasks().filter((task) => task.status !== "running" && !seenTaskIds.has(task.id));
-	}
+  function unseenFinishedTasks(): BgTask[] {
+    return registry
+      .allTasks()
+      .filter((task) => task.status !== 'running' && !seenTaskIds.has(task.id));
+  }
 
-	function clearFinishedNotices(ctx = currentCtx): number {
-		const unseen = unseenFinishedTasks();
-		for (const task of unseen) seenTaskIds.add(task.id);
-		updateUi(ctx);
-		return unseen.length;
-	}
+  function clearFinishedNotices(ctx = currentCtx): number {
+    const unseen = unseenFinishedTasks();
+    for (const task of unseen) seenTaskIds.add(task.id);
+    updateUi(ctx);
+    return unseen.length;
+  }
 
-	function notifyClearFinishedNotices(ctx: ExtensionContext): void {
-		currentCtx = ctx;
-		const cleared = clearFinishedNotices(ctx);
-		if (!ctx.hasUI) return;
-		ctx.ui.notify(
-			cleared > 0
-				? `Cleared ${cleared} finished background task notice${cleared === 1 ? "" : "s"}.`
-				: "No finished background task notices to clear.",
-			cleared > 0 ? "info" : "warning",
-		);
-	}
+  function notifyClearFinishedNotices(ctx: ExtensionContext): void {
+    currentCtx = ctx;
+    const cleared = clearFinishedNotices(ctx);
+    if (!ctx.hasUI) return;
+    ctx.ui.notify(
+      cleared > 0
+        ? `Cleared ${String(cleared)} finished background task notice${cleared === 1 ? '' : 's'}.`
+        : 'No finished background task notices to clear.',
+      cleared > 0 ? 'info' : 'warning',
+    );
+  }
 
-	function updateUi(ctx = currentCtx): void {
-		if (registry.isShuttingDown() || !ctx) return;
-		try {
-			if (!ctx.hasUI) return;
-			const allTasks = registry.allTasks();
-			const running = allTasks.filter((task) => task.status === "running");
-			const unseenFailed = allTasks.filter((task) => task.status === "failed" && !seenTaskIds.has(task.id));
-			const unseenStopped = allTasks.filter((task) => task.status === "killed" && !seenTaskIds.has(task.id));
-			const unseenDone = allTasks.filter((task) => task.status === "completed" && !seenTaskIds.has(task.id));
-			const unseenFinishedCount = unseenFailed.length + unseenStopped.length + unseenDone.length;
-			const updateSegment = formatUpdateSegment(latestKnownVersion, PACKAGE_VERSION ?? "");
-			ctx.ui.setWidget("background-tasks", undefined);
-			if (running.length === 0 && unseenFinishedCount === 0) {
-				ctx.ui.setStatus("background-tasks", updateSegment ? `${footerLabel(" bg ")}${footerText(ctx.ui.theme, "accent", updateSegment)} ` : undefined);
-				return;
-			}
+  function updateUi(ctx = currentCtx): void {
+    if (registry.isShuttingDown() || !ctx) return;
+    try {
+      if (!ctx.hasUI) return;
+      const allTasks = registry.allTasks();
+      const running = allTasks.filter((task) => task.status === 'running');
+      const unseenFailed = allTasks.filter(
+        (task) => task.status === 'failed' && !seenTaskIds.has(task.id),
+      );
+      const unseenStopped = allTasks.filter(
+        (task) => task.status === 'killed' && !seenTaskIds.has(task.id),
+      );
+      const unseenDone = allTasks.filter(
+        (task) => task.status === 'completed' && !seenTaskIds.has(task.id),
+      );
+      const unseenFinishedCount = unseenFailed.length + unseenStopped.length + unseenDone.length;
+      const updateSegment = formatUpdateSegment(latestKnownVersion, PACKAGE_VERSION ?? '');
+      ctx.ui.setWidget('background-tasks', undefined);
+      if (running.length === 0 && unseenFinishedCount === 0) {
+        ctx.ui.setStatus(
+          'background-tasks',
+          updateSegment ? lightBlue(` bg ${updateSegment} `) : undefined,
+        );
+        return;
+      }
 
-			const statuses = [
-				running.length > 0 ? footerStatus(ctx.ui.theme, "running", `${running.length}▶`) : undefined,
-				unseenFailed.length > 0 ? footerStatus(ctx.ui.theme, "failed", `${unseenFailed.length}✗`) : undefined,
-				unseenStopped.length > 0 ? footerStatus(ctx.ui.theme, "killed", `${unseenStopped.length}■`) : undefined,
-				unseenDone.length > 0 ? footerStatus(ctx.ui.theme, "completed", `${unseenDone.length}✓`) : undefined,
-			].filter((status): status is string => status !== undefined).join(" ");
-			const segments = [statuses];
-			if (updateSegment) segments.push(footerText(ctx.ui.theme, "accent", updateSegment));
-			const label = `${footerLabel(" bg ")}${segments.join(" · ")} `;
-			ctx.ui.setStatus("background-tasks", label);
-		} catch (error) {
-			console.error(`[background-tasks] UI update failed: ${error instanceof Error ? error.message : String(error)}`);
-			currentCtx = undefined;
-		}
-	}
+      const parts: string[] = [];
+      if (running.length > 0) parts.push(`${String(running.length)} running`);
+      if (unseenFailed.length > 0) parts.push(`${String(unseenFailed.length)} failed`);
+      if (unseenStopped.length > 0) parts.push(`${String(unseenStopped.length)} stopped`);
+      if (unseenDone.length > 0) parts.push(`${String(unseenDone.length)} done`);
+      const entryHint = dockOpen
+        ? 'focused'
+        : `Shift↓${unseenFinishedCount > 0 ? ' · /bg-clear' : ''}`;
+      const segments = [...parts, entryHint];
+      if (updateSegment) segments.push(updateSegment);
+      const label = ` bg ${segments.join(' · ')} `;
+      ctx.ui.setStatus('background-tasks', lightBlue(label));
+    } catch (error) {
+      console.error(
+        `[background-tasks] UI update failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      currentCtx = undefined;
+    }
+  }
 
-	async function startTask(ctx: ExtensionContext, command: string, options: StartTaskOptions = {}): Promise<BgTask> {
-		currentCtx = ctx;
-		return registry.startTask(ctx, command, options);
-	}
+  async function startTask(
+    ctx: ExtensionContext,
+    command: string,
+    options: StartTaskOptions = {},
+  ): Promise<BgTask> {
+    currentCtx = ctx;
+    return registry.startTask(ctx, command, options);
+  }
 
-	async function openTaskManager(ctx: ExtensionCommandContext | ExtensionContext, initialTaskId?: string): Promise<void> {
-		currentCtx = ctx;
-		if (!ctx.hasUI) {
-			ctx.ui.notify("Background task manager requires an interactive Pi UI. Use /jobs, /logs, or the bg_status/bg_logs tools in non-interactive mode.", "error");
-			return;
-		}
-		updateUi(ctx);
-		try {
-			await ctx.ui.custom<TaskManagerResult>(
-				(tui, theme, _keybindings, done) => {
-					const managerOptions = {
-						getTasks: () => registry.allTasks(),
-						stopTask: async (task: BackgroundTaskForUi) => {
-							await registry.stopTask(registry.resolveTask(task.id), "user");
-							updateUi(ctx);
-						},
-						stopAllRunning: async () => {
-							const result = await registry.stopAllRunning("user");
-							updateUi(ctx);
-							return result;
-						},
-						rerunTask: async (task: BackgroundTaskForUi) => {
-							const rerunOptions: StartTaskOptions = {
-								name: taskDisplayName(task),
-								isAgent: task.isAgent,
-								notifyOnCompletion: true,
-								triggerOnCompletion: false,
-							};
-							if (task.description !== undefined) rerunOptions.description = task.description;
-							if (task.timeoutSeconds !== undefined) rerunOptions.timeoutSeconds = task.timeoutSeconds;
-							const rerun = await startTask(ctx, task.command, rerunOptions);
-							updateUi(ctx);
-							return rerun;
-						},
-						showOutputPath: (task: BackgroundTaskForUi) => {
-							ctx.ui.notify(`Output path for ${taskDisplayName(task)} (${task.id}):\n${task.outputPath}`, "info");
-						},
-						markSeen: (taskId: string) => {
-							seenTaskIds.add(taskId);
-							updateUi(ctx);
-						},
-						markFinishedSeen: (taskIds: string[]) => {
-							for (const taskId of taskIds) seenTaskIds.add(taskId);
-							updateUi(ctx);
-						},
-						isSeen: (taskId: string) => seenTaskIds.has(taskId),
-					};
-					if (initialTaskId) return new BackgroundTasksManager(tui, theme, done, { ...managerOptions, initialTaskId });
-					return new BackgroundTasksManager(tui, theme, done, managerOptions);
-				},
-				{
-					overlay: true,
-					overlayOptions: BACKGROUND_TASKS_OVERLAY_OPTIONS,
-				},
-			);
-		} finally {
-			updateUi(ctx);
-		}
-	}
+  async function startAttestedPiTask(
+    ctx: ExtensionContext,
+    options: StartAttestedPiTaskOptions,
+  ): Promise<BgTask> {
+    currentCtx = ctx;
+    return registry.startAttestedPiTask(ctx, options);
+  }
 
-	pi.registerMessageRenderer<BgTaskSnapshot>("background-task-notification", (message, _options, theme) => {
-		return renderBackgroundTaskNotification(message.details, theme);
-	});
+  async function openTaskManager(
+    ctx: ExtensionCommandContext | ExtensionContext,
+    initialTaskId?: string,
+  ): Promise<void> {
+    currentCtx = ctx;
+    if (!ctx.hasUI) {
+      ctx.ui.notify(
+        'Background task manager requires an interactive Pi UI. Use /jobs, /logs, or the bg_status/bg_logs tools in non-interactive mode.',
+        'error',
+      );
+      return;
+    }
+    dockOpen = true;
+    updateUi(ctx);
+    try {
+      await ctx.ui.custom<TaskManagerResult>(
+        (tui, theme, _keybindings, done) => {
+          const managerOptions = {
+            getTasks: () => registry.allTasks(),
+            stopTask: async (task: BackgroundTaskForUi) => {
+              await registry.stopTask(registry.resolveTask(task.id), 'user');
+              updateUi(ctx);
+            },
+            stopAllRunning: async () => {
+              const result = await registry.stopAllRunning('user');
+              updateUi(ctx);
+              return result;
+            },
+            rerunTask: async (task: BackgroundTaskForUi) => {
+              const rerunOptions: StartTaskOptions = {
+                name: taskDisplayName(task),
+                isAgent: task.isAgent,
+                notifyOnCompletion: true,
+                triggerOnCompletion: false,
+              };
+              if (task.description !== undefined) rerunOptions.description = task.description;
+              if (task.timeoutSeconds !== undefined)
+                rerunOptions.timeoutSeconds = task.timeoutSeconds;
+              const rerun = await startTask(ctx, task.command, rerunOptions);
+              updateUi(ctx);
+              return rerun;
+            },
+            showOutputPath: (task: BackgroundTaskForUi) => {
+              ctx.ui.notify(
+                `Output path for ${taskDisplayName(task)} (${task.id}):\n${task.outputPath}`,
+                'info',
+              );
+            },
+            markSeen: (taskId: string) => {
+              seenTaskIds.add(taskId);
+              updateUi(ctx);
+            },
+            markFinishedSeen: (taskIds: string[]) => {
+              for (const taskId of taskIds) seenTaskIds.add(taskId);
+              updateUi(ctx);
+            },
+            isSeen: (taskId: string) => seenTaskIds.has(taskId),
+          };
+          if (initialTaskId)
+            return new BackgroundTasksManager(tui, theme, done, {
+              ...managerOptions,
+              initialTaskId,
+            });
+          return new BackgroundTasksManager(tui, theme, done, managerOptions);
+        },
+        {
+          overlay: true,
+          overlayOptions: {
+            anchor: 'bottom-center',
+            width: '96%',
+            minWidth: 64,
+            maxHeight: '60%',
+            margin: { bottom: 1, left: 1, right: 1 },
+          },
+        },
+      );
+    } finally {
+      dockOpen = false;
+      updateUi(ctx);
+    }
+  }
 
-	async function scheduleUpdateCheck(ctx: ExtensionContext): Promise<void> {
-		if (updateCheckStarted) return;
-		updateCheckStarted = true;
-		const env = process.env;
-		if (env["PI_BG_DISABLE_UPDATE_CHECK"] === "1") return;
-		if (env["PI_OFFLINE"] === "1") return;
-		if (!PACKAGE_VERSION) return;
-		const options: FetchLatestVersionOptions = {
-			packageName: PACKAGE_NAME,
-			onError: (error) => console.error(`[background-tasks] update check skipped: ${error.message}`),
-		};
-		const registryUrl = env["PI_BG_REGISTRY_URL"];
-		if (registryUrl) options.registryUrl = registryUrl;
-		const latest = await fetchLatestVersion(options);
-		if (latest && isNewerVersion(latest, PACKAGE_VERSION)) {
-			latestKnownVersion = latest;
-			updateUi(ctx);
-		}
-	}
+  pi.registerMessageRenderer<BgTaskSnapshot>(
+    'background-task-notification',
+    (message, _options, theme) => {
+      const task = message.details;
+      const status = task?.status ?? 'completed';
+      const color: ThemeColor =
+        status === 'completed'
+          ? 'success'
+          : status === 'failed'
+            ? 'error'
+            : status === 'killed'
+              ? 'warning'
+              : 'accent';
+      const id = task?.id ?? 'background task';
+      const name = task ? taskDisplayName(task) : 'Background task';
+      const output = task?.outputPath ? `\n${theme.fg('dim', `Output: ${task.outputPath}`)}` : '';
+      const error = task?.error ? `\n${theme.fg('error', task.error)}` : '';
+      return new Text(
+        `${theme.fg(color, `[bg ${status}]`)} ${theme.fg('accent', name)} ${theme.fg('dim', `(${id})`)}${output}${error}`,
+        0,
+        0,
+      );
+    },
+  );
 
-	pi.on("session_start", async (_event, ctx) => {
-		registry.setShuttingDown(false);
-		currentCtx = ctx;
-		await registry.ensureRuntimeDir(ctx);
-		updateUi(ctx);
-		if (statusInterval) clearInterval(statusInterval);
-		statusInterval = setInterval(() => updateUi(), STATUS_INTERVAL_MS);
-		// One-shot, non-blocking: never awaited on the session-start path or the status tick.
-		void scheduleUpdateCheck(ctx);
-	});
+  async function scheduleUpdateCheck(ctx: ExtensionContext): Promise<void> {
+    if (updateCheckStarted) return;
+    updateCheckStarted = true;
+    const env = process.env;
+    if (env['PI_BG_DISABLE_UPDATE_CHECK'] === '1') return;
+    if (env['PI_OFFLINE'] === '1') return;
+    if (!PACKAGE_VERSION) return;
+    const options: FetchLatestVersionOptions = {
+      packageName: PACKAGE_NAME,
+      onError: (error) => {
+        console.error(`[background-tasks] update check skipped: ${error.message}`);
+      },
+    };
+    const registryUrl = env['PI_BG_REGISTRY_URL'];
+    if (registryUrl) options.registryUrl = registryUrl;
+    const latest = await fetchLatestVersion(options);
+    if (latest && isNewerVersion(latest, PACKAGE_VERSION)) {
+      latestKnownVersion = latest;
+      updateUi(ctx);
+    }
+  }
 
-	pi.on("session_shutdown", async (_event, ctx) => {
-		registry.setShuttingDown(true);
-		currentCtx = undefined;
-		if (statusInterval) {
-			clearInterval(statusInterval);
-			statusInterval = undefined;
-		}
-		const running = registry.allTasks().filter((task) => task.status === "running");
-		if (running.length === 0) return;
+  pi.on('session_start', async (_event, ctx) => {
+    registry.setShuttingDown(false);
+    currentCtx = ctx;
+    await registry.ensureRuntimeDir(ctx);
+    updateUi(ctx);
+    if (statusInterval) clearInterval(statusInterval);
+    statusInterval = setInterval(() => {
+      updateUi();
+    }, STATUS_INTERVAL_MS);
+    // One-shot, non-blocking: never awaited on the session-start path or the status tick.
+    void scheduleUpdateCheck(ctx);
+  });
 
-		const failures: string[] = [];
-		await Promise.all(
-			running.map(async (task) => {
-				try {
-					await registry.stopTask(task, "shutdown", "Killed during Pi session shutdown/reload");
-				} catch (error) {
-					const message = `${task.id}: ${error instanceof Error ? error.message : String(error)}`;
-					failures.push(message);
-					console.error(`[background-tasks] shutdown cleanup failed for ${message}`);
-				}
-			}),
-		);
-		if (failures.length > 0 && ctx.hasUI) {
-			ctx.ui.notify(`Background task cleanup failed:\n${failures.join("\n")}`, "error");
-		}
-	});
+  pi.on('session_shutdown', async (_event, ctx) => {
+    registry.setShuttingDown(true);
+    currentCtx = undefined;
+    if (statusInterval) {
+      clearInterval(statusInterval);
+      statusInterval = undefined;
+    }
+    const running = registry.allTasks().filter((task) => task.status === 'running');
+    if (running.length === 0) return;
 
-	pi.registerCommand("bg", {
-		description: "Start a shell command as a tracked background task: /bg [--agent] [--name \"Task name\"] <command>",
-		handler: async (args, ctx) => {
-			try {
-				const parsed = parseBgCommandArgs(args);
-				const taskOptions: StartTaskOptions = { isAgent: parsed.isAgent, notifyOnCompletion: true, triggerOnCompletion: false };
-				if (parsed.name !== undefined) taskOptions.name = parsed.name;
-				const task = await startTask(ctx, parsed.command, taskOptions);
-				ctx.ui.notify(`Started ${taskDisplayName(task)} (${task.id})\nOutput: ${task.outputPath}\nCommand: ${task.command}`, "info");
-			} catch (error) {
-				ctx.ui.notify(`Background task failed to start: ${error instanceof Error ? error.message : String(error)}`, "error");
-			}
-		},
-	});
+    const failures: string[] = [];
+    await Promise.all(
+      running.map(async (task) => {
+        try {
+          await registry.stopTask(task, 'shutdown', 'Killed during Pi session shutdown/reload');
+        } catch (error) {
+          const message = `${task.id}: ${error instanceof Error ? error.message : String(error)}`;
+          failures.push(message);
+          console.error(`[background-tasks] shutdown cleanup failed for ${message}`);
+        }
+      }),
+    );
+    if (failures.length > 0 && ctx.hasUI) {
+      ctx.ui.notify(`Background task cleanup failed:\n${failures.join('\n')}`, 'error');
+    }
+  });
 
-	pi.registerCommand("tasks", {
-		description: "Open the Claude-like background task manager UI",
-		handler: async (args, ctx) => {
-			const taskId = args.trim() || undefined;
-			await openTaskManager(ctx, taskId);
-		},
-	});
+  pi.registerCommand('bg', {
+    description:
+      'Start a shell command as a tracked background task: /bg [--agent] [--name "Task name"] <command>',
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseBgCommandArgs(args);
+        const taskOptions: StartTaskOptions = {
+          isAgent: parsed.isAgent,
+          notifyOnCompletion: true,
+          triggerOnCompletion: false,
+        };
+        if (parsed.name !== undefined) taskOptions.name = parsed.name;
+        const task = await startTask(ctx, parsed.command, taskOptions);
+        ctx.ui.notify(
+          `Started ${taskDisplayName(task)} (${task.id})\nOutput: ${task.outputPath}\nCommand: ${task.command}`,
+          'info',
+        );
+      } catch (error) {
+        ctx.ui.notify(
+          `Background task failed to start: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      }
+    },
+  });
 
-	pi.registerCommand("bg-tasks", {
-		description: "Open the background task manager UI",
-		handler: async (args, ctx) => {
-			const taskId = args.trim() || undefined;
-			await openTaskManager(ctx, taskId);
-		},
-	});
+  pi.registerCommand('tasks', {
+    description: 'Open the Claude-like background task manager UI',
+    handler: async (args, ctx) => {
+      const taskId = optionalTrimmed(args);
+      await openTaskManager(ctx, taskId);
+    },
+  });
 
-	pi.registerCommand("bg-clear", {
-		description: "Clear finished background task footer notices",
-		handler: async (_args, ctx) => {
-			notifyClearFinishedNotices(ctx);
-		},
-	});
+  pi.registerCommand('bg-tasks', {
+    description: 'Open the background task manager UI',
+    handler: async (args, ctx) => {
+      const taskId = optionalTrimmed(args);
+      await openTaskManager(ctx, taskId);
+    },
+  });
 
-	pi.registerCommand("bg-update", {
-		description: "Show how to update pi-background-tasks to the latest published version",
-		handler: async (_args, ctx) => {
-			const current = PACKAGE_VERSION ?? "unknown";
-			const latest = latestKnownVersion;
-			const pinnedNpm = latest ? `${PACKAGE_NAME}@${latest}` : `${PACKAGE_NAME}@<version>`;
-			const pinnedGit = latest ? `${GIT_INSTALL_TARGET}@v${latest}` : `${GIT_INSTALL_TARGET}@<tag>`;
-			const lines = [
-				latest
-					? `pi-background-tasks ${current} is installed; ${latest} is the latest published version.`
-					: `pi-background-tasks ${current} is installed.`,
-				"Update from npm:",
-				`  pi install npm:${PACKAGE_NAME}@latest`,
-				`  pi install npm:${pinnedNpm}`,
-				"Or update from git tags:",
-				`  pi install ${pinnedGit}`,
-				"This command only prints update instructions; it does not install or self-update.",
-			];
-			ctx.ui.notify(lines.join("\n"), "info");
-		},
-	});
+  pi.registerCommand('bg-clear', {
+    description: 'Clear finished background task footer notices',
+    handler: (_args, ctx) => {
+      notifyClearFinishedNotices(ctx);
+      return Promise.resolve();
+    },
+  });
 
-	pi.registerShortcut("shift+down" satisfies KeyId, {
-		description: "Open focused background task footer dock",
-		handler: async (ctx) => {
-			await openTaskManager(ctx);
-		},
-	});
+  pi.registerCommand('bg-update', {
+    description: 'Show how to update pi-background-tasks to the latest published version',
+    handler: (_args, ctx) => {
+      const current = PACKAGE_VERSION ?? 'unknown';
+      const latest = latestKnownVersion;
+      const pinnedNpm = latest ? `${PACKAGE_NAME}@${latest}` : `${PACKAGE_NAME}@<version>`;
+      const pinnedGit = latest ? `${GIT_INSTALL_TARGET}@v${latest}` : `${GIT_INSTALL_TARGET}@<tag>`;
+      const lines = [
+        latest
+          ? `pi-background-tasks ${current} is installed; ${latest} is the latest published version.`
+          : `pi-background-tasks ${current} is installed.`,
+        'Update from npm:',
+        `  pi install npm:${PACKAGE_NAME}@latest`,
+        `  pi install npm:${pinnedNpm}`,
+        'Or update from git tags:',
+        `  pi install ${pinnedGit}`,
+        'This command only prints update instructions; it does not install or self-update.',
+      ];
+      ctx.ui.notify(lines.join('\n'), 'info');
+      return Promise.resolve();
+    },
+  });
 
-	pi.registerShortcut("ctrl+alt+c" satisfies KeyId, {
-		description: "Clear finished background task footer notices (terminal-dependent fallback for /bg-clear)",
-		handler: (ctx) => notifyClearFinishedNotices(ctx),
-	});
+  pi.registerShortcut('shift+down' satisfies KeyId, {
+    description: 'Open focused background task footer dock',
+    handler: async (ctx) => {
+      await openTaskManager(ctx);
+    },
+  });
 
-	pi.registerCommand("jobs", {
-		description: "List running and recent background tasks",
-		handler: async (_args, ctx) => {
-			currentCtx = ctx;
-			ctx.ui.notify(formatSnapshotList(registry.allTasks().map((task) => registry.snapshot(task))), "info");
-			updateUi(ctx);
-		},
-	});
+  pi.registerShortcut('ctrl+alt+c' satisfies KeyId, {
+    description:
+      'Clear finished background task footer notices (terminal-dependent fallback for /bg-clear)',
+    handler: (ctx) => {
+      notifyClearFinishedNotices(ctx);
+    },
+  });
 
-	pi.registerCommand("logs", {
-		description: "Show bounded output from a background task: /logs <id> [maxBytes]",
-		getArgumentCompletions: (prefix) => {
-			const matches = registry.allTasks()
-				.filter((task) => task.id.startsWith(prefix.trim()))
-				.slice(0, 20)
-				.map((task) => ({ value: task.id, label: `${task.id} ${taskDisplayName(task)}`, description: `${task.status} — ${truncateChars(task.command, 60)}` }));
-			return matches.length > 0 ? matches : null;
-		},
-		handler: async (args, ctx) => {
-			try {
-				currentCtx = ctx;
-				const [id, bytes] = args.trim().split(/\s+/, 2);
-				const task = registry.resolveTask(id || "");
-				const maxBytes = normalizeMaxBytes(Number(bytes), DEFAULT_LOG_BYTES);
-				const logs = await registry.getTaskLogs(task, maxBytes, true);
-				ctx.ui.notify(logs.text, "info");
-			} catch (error) {
-				ctx.ui.notify(`Background logs error: ${error instanceof Error ? error.message : String(error)}`, "error");
-			}
-		},
-	});
+  pi.registerCommand('jobs', {
+    description: 'List running and recent background tasks',
+    handler: (_args, ctx) => {
+      currentCtx = ctx;
+      ctx.ui.notify(
+        formatSnapshotList(registry.allTasks().map((task) => registry.snapshot(task))),
+        'info',
+      );
+      updateUi(ctx);
+      return Promise.resolve();
+    },
+  });
 
-	pi.registerCommand("kill", {
-		description: "Stop a running background task: /kill <id>",
-		getArgumentCompletions: (prefix) => {
-			const matches = registry.allTasks()
-				.filter((task) => task.status === "running" && task.id.startsWith(prefix.trim()))
-				.slice(0, 20)
-				.map((task) => ({ value: task.id, label: `${task.id} ${taskDisplayName(task)}`, description: truncateChars(task.command, 70) }));
-			return matches.length > 0 ? matches : null;
-		},
-		handler: async (args, ctx) => {
-			try {
-				currentCtx = ctx;
-				const task = registry.resolveTask(args.trim());
-				await registry.stopTask(task, "user");
-				ctx.ui.notify(`Killed ${taskDisplayName(task)} (${task.id}). Output: ${task.outputPath}`, "info");
-				updateUi(ctx);
-			} catch (error) {
-				ctx.ui.notify(`Background kill error: ${error instanceof Error ? error.message : String(error)}`, "error");
-			}
-		},
-	});
+  pi.registerCommand('logs', {
+    description: 'Show bounded output from a background task: /logs <id> [maxBytes]',
+    getArgumentCompletions: (prefix) => {
+      const matches = registry
+        .allTasks()
+        .filter((task) => task.id.startsWith(prefix.trim()))
+        .slice(0, 20)
+        .map((task) => ({
+          value: task.id,
+          label: `${task.id} ${taskDisplayName(task)}`,
+          description: `${task.status} — ${truncateChars(task.command, 60)}`,
+        }));
+      return matches.length > 0 ? matches : null;
+    },
+    handler: async (args, ctx) => {
+      try {
+        currentCtx = ctx;
+        const [id, bytes] = args.trim().split(/\s+/, 2);
+        const task = registry.resolveTask(id ?? '');
+        const maxBytes = normalizeMaxBytes(Number(bytes), DEFAULT_LOG_BYTES);
+        const logs = await registry.getTaskLogs(task, maxBytes, true);
+        ctx.ui.notify(logs.text, 'info');
+      } catch (error) {
+        ctx.ui.notify(
+          `Background logs error: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      }
+    },
+  });
 
-	pi.registerTool<typeof BgRunParams, BgRunDetails>({
-		name: "bg_run",
-		label: "Background Run",
-		description: `Start a named long-running shell command in the background and return immediately with a task ID and output path. Output is written to /tmp/pi-bg-tasks and model-visible logs are bounded to ${formatSize(MAX_LOG_BYTES)}.`,
-		promptSnippet: "Start named long-running shell commands in the background and return a task ID plus output file path",
-		promptGuidelines: [
-			"Use bg_run instead of bash for commands expected to run for a long time, such as test suites, dev servers, watchers, builds, or sleeps.",
-			"When using bg_run, always set name to a concise 2-6 word human-readable label for the footer task dock; do not use the raw command as the name unless it is already short and meaningful.",
-			"After bg_run, use bg_status and bg_logs to inspect progress; do not assume the background task completed until status says completed, failed, or killed.",
-			"When a <background-task-notification> appears, react to it: inspect bg_status/bg_logs as needed, then report completion, failure, or next steps to the user.",
-		],
-		parameters: BgRunParams,
-		prepareArguments(args): BgRunParamsValue {
-			if (!args || typeof args !== "object") throw new Error("bg_run arguments must be an object");
-			const input = args as Record<string, unknown>;
-			if (typeof input["command"] !== "string") throw new Error("bg_run requires command string");
-			const prepared: BgRunParamsValue = {
-				command: input["command"],
-				name: normalizeTaskName(input["name"]) ?? normalizeTaskName(input["description"]) ?? deriveTaskNameFromCommand(input["command"]),
-				isAgent: typeof input["isAgent"] === "boolean" ? input["isAgent"] : commandMayLaunchPiAgent(input["command"]),
-			};
-			if (typeof input["description"] === "string") prepared.description = input["description"];
-			if (typeof input["timeoutSeconds"] === "number") prepared.timeoutSeconds = input["timeoutSeconds"];
-			if (typeof input["notifyOnCompletion"] === "boolean") prepared.notifyOnCompletion = input["notifyOnCompletion"];
-			if (typeof input["triggerOnCompletion"] === "boolean") prepared.triggerOnCompletion = input["triggerOnCompletion"];
-			return prepared;
-		},
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const input = params as BgRunParamsValue;
-			const isAgent = input.isAgent ?? commandMayLaunchPiAgent(input.command);
-			const taskOptions: StartTaskOptions = {
-				name: input.name,
-				isAgent,
-				notifyOnCompletion: input.notifyOnCompletion ?? true,
-				triggerOnCompletion: input.triggerOnCompletion ?? true,
-			};
-			if (input.description !== undefined) taskOptions.description = input.description;
-			if (input.timeoutSeconds !== undefined) taskOptions.timeoutSeconds = input.timeoutSeconds;
-			const task = await startTask(ctx, input.command, taskOptions);
-			return {
-				content: textContent(`Started background task ${taskDisplayName(task)} (${task.id})\nStatus: ${task.status}\nPID: ${task.pid ?? "unknown"}\nOutput: ${task.outputPath}`),
-				details: { task: registry.snapshot(task) },
-			};
-		},
-		renderCall(args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("bg_run "))}${theme.fg("muted", truncateChars(taskDisplayName(args), COMMAND_PREVIEW_CHARS))}`, 0, 0);
-		},
-		renderResult(result, _options, theme) {
-			const task = result.details?.task;
-			if (!task) return renderPlainResult(result, _options, theme);
-			return new Text(`${theme.fg("success", "✓ started")} ${theme.fg("accent", taskDisplayName(task))} ${theme.fg("dim", `(${task.id})`)}\n${theme.fg("dim", `Output: ${task.outputPath}`)}`, 0, 0);
-		},
-	});
+  pi.registerCommand('kill', {
+    description: 'Stop a running background task: /kill <id>',
+    getArgumentCompletions: (prefix) => {
+      const matches = registry
+        .allTasks()
+        .filter((task) => task.status === 'running' && task.id.startsWith(prefix.trim()))
+        .slice(0, 20)
+        .map((task) => ({
+          value: task.id,
+          label: `${task.id} ${taskDisplayName(task)}`,
+          description: truncateChars(task.command, 70),
+        }));
+      return matches.length > 0 ? matches : null;
+    },
+    handler: async (args, ctx) => {
+      try {
+        currentCtx = ctx;
+        const task = registry.resolveTask(args.trim());
+        await registry.stopTask(task, 'user');
+        ctx.ui.notify(
+          `Killed ${taskDisplayName(task)} (${task.id}). Output: ${task.outputPath}`,
+          'info',
+        );
+        updateUi(ctx);
+      } catch (error) {
+        ctx.ui.notify(
+          `Background kill error: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      }
+    },
+  });
 
-	pi.registerTool<typeof BgStatusParams, BgStatusDetails>({
-		name: "bg_status",
-		label: "Background Status",
-		description: "Inspect one background task or list all running/recent background tasks.",
-		promptSnippet: "Inspect status for one or all background tasks",
-		promptGuidelines: ["Use bg_status before bg_logs when you need to know whether a background task is still running or has finished."],
-		parameters: BgStatusParams,
-		async execute(_toolCallId, params) {
-			const selected = params.taskId ? [registry.resolveTask(params.taskId)] : registry.allTasks();
-			const snapshots = selected.map((task) => registry.snapshot(task));
-			return {
-				content: textContent(formatSnapshotList(snapshots)),
-				details: { tasks: snapshots },
-			};
-		},
-		renderCall(args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("bg_status"))}${args.taskId ? ` ${theme.fg("accent", args.taskId)}` : ""}`, 0, 0);
-		},
-		renderResult: renderPlainResult,
-	});
+  pi.registerTool<typeof BgRunParams, BgRunDetails>({
+    name: 'bg_run',
+    label: 'Background Run',
+    description: `Start a named long-running shell command in the background and return immediately with a task ID and output path. Output is written to .pi/tasks and model-visible logs are bounded to ${formatSize(MAX_LOG_BYTES)}.`,
+    promptSnippet:
+      'Start named long-running shell commands in the background and return a task ID plus output file path',
+    promptGuidelines: [
+      'Use bg_run instead of bash for commands expected to run for a long time, such as test suites, dev servers, watchers, builds, or sleeps.',
+      'Always set isAgent: true only when the background task launches an LLM/agent process; set isAgent: false for scripts, tests, dev servers, sleeps, and ordinary shell commands.',
+      'When using bg_run, always set name to a concise 2-6 word human-readable label for the footer task dock; do not use the raw command as the name unless it is already short and meaningful.',
+      'After bg_run, use bg_status and bg_logs to inspect progress; do not assume the background task completed until status says completed, failed, or killed.',
+      'When a <background-task-notification> appears, react to it: inspect bg_status/bg_logs as needed, then report completion, failure, or next steps to the user.',
+    ],
+    parameters: BgRunParams,
+    prepareArguments(args): BgRunParamsValue {
+      if (!args || typeof args !== 'object') throw new Error('bg_run arguments must be an object');
+      const input = args as BgToolArgumentRecord;
+      if (typeof input.command !== 'string') throw new Error('bg_run requires command string');
+      if (typeof input.isAgent !== 'boolean') {
+        throw new Error(
+          'bg_run requires isAgent boolean. Set true only for LLM/agent tasks; set false for scripts, tests, servers, sleeps, and ordinary shell commands.',
+        );
+      }
+      const prepared: BgRunParamsValue = {
+        command: input.command,
+        name:
+          normalizeTaskName(input.name) ??
+          normalizeTaskName(input.description) ??
+          deriveTaskNameFromCommand(input.command),
+        isAgent: input.isAgent,
+      };
+      if (typeof input.description === 'string') prepared.description = input.description;
+      if (typeof input.timeoutSeconds === 'number') prepared.timeoutSeconds = input.timeoutSeconds;
+      if (typeof input.notifyOnCompletion === 'boolean')
+        prepared.notifyOnCompletion = input.notifyOnCompletion;
+      if (typeof input.triggerOnCompletion === 'boolean')
+        prepared.triggerOnCompletion = input.triggerOnCompletion;
+      return prepared;
+    },
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (typeof params.isAgent !== 'boolean') {
+        throw new Error(
+          'bg_run requires isAgent boolean. Set true only for LLM/agent tasks; set false for scripts, tests, servers, sleeps, and ordinary shell commands.',
+        );
+      }
+      const taskOptions: StartTaskOptions = {
+        name: params.name,
+        isAgent: params.isAgent,
+        notifyOnCompletion: params.notifyOnCompletion ?? true,
+        triggerOnCompletion: params.triggerOnCompletion ?? true,
+      };
+      if (params.description !== undefined) taskOptions.description = params.description;
+      if (params.timeoutSeconds !== undefined) taskOptions.timeoutSeconds = params.timeoutSeconds;
+      const task = await startTask(ctx, params.command, taskOptions);
+      return {
+        content: textContent(
+          `Started background task ${taskDisplayName(task)} (${task.id})\nStatus: ${task.status}\nPID: ${String(task.pid ?? 'unknown')}\nOutput: ${task.outputPath}`,
+        ),
+        details: { task: registry.snapshot(task) },
+      };
+    },
+    renderCall(args, theme) {
+      return new Text(
+        `${theme.fg('toolTitle', theme.bold('bg_run '))}${theme.fg('muted', truncateChars(taskDisplayName(args), COMMAND_PREVIEW_CHARS))}`,
+        0,
+        0,
+      );
+    },
+    renderResult(result, _options, theme) {
+      const { task } = result.details;
+      return new Text(
+        `${theme.fg('success', '✓ started')} ${theme.fg('accent', taskDisplayName(task))} ${theme.fg('dim', `(${task.id})`)}\n${theme.fg('dim', `Output: ${task.outputPath}`)}`,
+        0,
+        0,
+      );
+    },
+  });
 
-	pi.registerTool<typeof BgLogsParams, BgLogsDetails>({
-		name: "bg_logs",
-		label: "Background Logs",
-		description: `Read bounded output from a background task. Output is capped at ${formatSize(MAX_LOG_BYTES)} for model safety and points to the full output file when truncated.`,
-		promptSnippet: "Read bounded output from a background task log",
-		promptGuidelines: ["Use bg_logs with a modest maxBytes value to inspect background task progress without flooding context."],
-		parameters: BgLogsParams,
-		async execute(_toolCallId, params) {
-			const task = registry.resolveTask(params.taskId);
-			const logs = await registry.getTaskLogs(task, normalizeMaxBytes(params.maxBytes), params.tail ?? true);
-			return {
-				content: textContent(logs.text),
-				details: logs.details,
-			};
-		},
-		renderCall(args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("bg_logs "))}${theme.fg("accent", args.taskId)}`, 0, 0);
-		},
-		renderResult(result, { expanded }, theme) {
-			const details = result.details;
-			if (!details) return renderPlainResult(result, { expanded, isPartial: false }, theme);
-			let text = `${theme.fg("accent", taskDisplayName(details.task))} ${theme.fg("dim", `(${details.task.id})`)} ${theme.fg("muted", details.tail ? "tail" : "head")} ${formatSize(details.bytesRead)}`;
-			if (details.truncated) text += theme.fg("warning", " (truncated)");
-			text += `\n${theme.fg("dim", `Full output: ${details.path}`)}`;
-			if (expanded) {
-				const content = result.content?.[0];
-				if (content?.type === "text") text += `\n${theme.fg("toolOutput", content.text.split("\n").slice(0, 30).join("\n"))}`;
-			}
-			return new Text(text, 0, 0);
-		},
-	});
+  pi.registerTool<typeof BgPiAttestedParams, BgRunDetails>({
+    name: 'bg_run_pi_attested',
+    label: 'Attested Pi Run',
+    description:
+      'Opt-in evidence-oriented direct Pi spawn. Launches exactly one `pi --mode json` child, records raw Pi events/stderr, hashes prompt/report/output, observes OAuth through ModelRegistry, and emits a strict attestation sidecar only after successful completion.',
+    promptSnippet: 'Start an attested direct Pi agent task and return its task ID plus output path',
+    promptGuidelines: [
+      'Use only when the user explicitly asks for an attested Pi evidence-producing task; ordinary background work should use bg_run unchanged.',
+      'Provide provider/model as structured fields and a relative reportPath that the child Pi prompt will write before exit.',
+      'Do not provide channel, auth, route, or hash claims; the producer observes those facts itself and fails loudly if it cannot attest them.',
+    ],
+    parameters: BgPiAttestedParams,
+    prepareArguments(args): BgPiAttestedParamsValue {
+      if (!args || typeof args !== 'object')
+        throw new Error('bg_run_pi_attested arguments must be an object');
+      const input = args as BgPiAttestedArgumentRecord;
+      if (typeof input.name !== 'string') throw new Error('bg_run_pi_attested requires name');
+      if (typeof input.provider !== 'string') throw new Error('bg_run_pi_attested requires provider');
+      if (typeof input.model !== 'string') throw new Error('bg_run_pi_attested requires model');
+      if (typeof input.prompt !== 'string') throw new Error('bg_run_pi_attested requires prompt');
+      if (typeof input.reportPath !== 'string')
+        throw new Error('bg_run_pi_attested requires reportPath');
+      const prepared: BgPiAttestedParamsValue = {
+        name: input.name,
+        provider: input.provider,
+        model: input.model,
+        prompt: input.prompt,
+        reportPath: input.reportPath,
+      };
+      if (Array.isArray(input.extraPiArgs)) {
+        if (!input.extraPiArgs.every((entry) => typeof entry === 'string'))
+          throw new Error('bg_run_pi_attested extraPiArgs entries must be strings');
+        prepared.extraPiArgs = input.extraPiArgs;
+      }
+      if (typeof input.thinking === 'string') prepared.thinking = input.thinking;
+      if (typeof input.timeoutSeconds === 'number') prepared.timeoutSeconds = input.timeoutSeconds;
+      return prepared;
+    },
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const task = await startAttestedPiTask(ctx, params);
+      return {
+        content: textContent(
+          `Started attested Pi task ${taskDisplayName(task)} (${task.id})\nStatus: ${task.status}\nPID: ${String(task.pid ?? 'unknown')}\nOutput: ${task.outputPath}\nAttestation: ${task.attestationPath ?? 'pending until completion'}`,
+        ),
+        details: { task: registry.snapshot(task) },
+      };
+    },
+    renderCall(args, theme) {
+      return new Text(
+        `${theme.fg('toolTitle', theme.bold('bg_run_pi_attested '))}${theme.fg('muted', truncateChars(args.name, COMMAND_PREVIEW_CHARS))}`,
+        0,
+        0,
+      );
+    },
+    renderResult(result, _options, theme) {
+      const { task } = result.details;
+      return new Text(
+        `${theme.fg('success', '✓ started')} ${theme.fg('accent', taskDisplayName(task))} ${theme.fg('dim', `(${task.id})`)}\n${theme.fg('dim', `Output: ${task.outputPath}`)}\n${theme.fg('dim', `Attestation: ${task.attestationPath ?? 'pending'}`)}`,
+        0,
+        0,
+      );
+    },
+  });
 
-	pi.registerTool<typeof BgKillParams, BgKillDetails>({
-		name: "bg_kill",
-		label: "Background Kill",
-		description: "Stop a running background task by ID. Fails loudly if the task is unknown or already finished.",
-		promptSnippet: "Stop a running background task by ID",
-		promptGuidelines: ["Use bg_kill when the user asks to stop a background task or when a bg_run command is no longer needed."],
-		parameters: BgKillParams,
-		async execute(_toolCallId, params) {
-			const task = registry.resolveTask(params.taskId);
-			await registry.stopTask(task, "user");
-			const message = `Killed background task ${taskDisplayName(task)} (${task.id}). Output: ${task.outputPath}`;
-			return {
-				content: textContent(message),
-				details: { task: registry.snapshot(task), message },
-			};
-		},
-		renderCall(args, theme) {
-			return new Text(`${theme.fg("toolTitle", theme.bold("bg_kill "))}${theme.fg("accent", args.taskId)}`, 0, 0);
-		},
-		renderResult(result, _options, theme) {
-			const task = result.details?.task;
-			if (!task) return renderPlainResult(result, _options, theme);
-			return new Text(`${theme.fg("warning", "■ killed")} ${theme.fg("accent", taskDisplayName(task))} ${theme.fg("dim", `(${task.id})`)}\n${theme.fg("dim", `Output: ${task.outputPath}`)}`, 0, 0);
-		},
-	});
+  pi.registerTool<typeof BgStatusParams, BgStatusDetails>({
+    name: 'bg_status',
+    label: 'Background Status',
+    description: 'Inspect one background task or list all running/recent background tasks.',
+    promptSnippet: 'Inspect status for one or all background tasks',
+    promptGuidelines: [
+      'Use bg_status before bg_logs when you need to know whether a background task is still running or has finished.',
+    ],
+    parameters: BgStatusParams,
+    execute(_toolCallId, params) {
+      const selected = params.taskId ? [registry.resolveTask(params.taskId)] : registry.allTasks();
+      const snapshots = selected.map((task) => registry.snapshot(task));
+      return Promise.resolve({
+        content: textContent(formatSnapshotList(snapshots)),
+        details: { tasks: snapshots },
+      });
+    },
+    renderCall(args, theme) {
+      return new Text(
+        `${theme.fg('toolTitle', theme.bold('bg_status'))}${args.taskId ? ` ${theme.fg('accent', args.taskId)}` : ''}`,
+        0,
+        0,
+      );
+    },
+    renderResult: renderPlainResult,
+  });
+
+  pi.registerTool<typeof BgLogsParams, BgLogsDetails>({
+    name: 'bg_logs',
+    label: 'Background Logs',
+    description: `Read bounded output from a background task. Output is capped at ${formatSize(MAX_LOG_BYTES)} for model safety and points to the full output file when truncated.`,
+    promptSnippet: 'Read bounded output from a background task log',
+    promptGuidelines: [
+      'Use bg_logs with a modest maxBytes value to inspect background task progress without flooding context.',
+    ],
+    parameters: BgLogsParams,
+    async execute(_toolCallId, params) {
+      const task = registry.resolveTask(params.taskId);
+      const logs = await registry.getTaskLogs(
+        task,
+        normalizeMaxBytes(params.maxBytes),
+        params.tail ?? true,
+      );
+      return {
+        content: textContent(logs.text),
+        details: logs.details,
+      };
+    },
+    renderCall(args, theme) {
+      return new Text(
+        `${theme.fg('toolTitle', theme.bold('bg_logs '))}${theme.fg('accent', args.taskId)}`,
+        0,
+        0,
+      );
+    },
+    renderResult(result, { expanded }, theme) {
+      const details = result.details;
+      let text = `${theme.fg('accent', taskDisplayName(details.task))} ${theme.fg('dim', `(${details.task.id})`)} ${theme.fg('muted', details.tail ? 'tail' : 'head')} ${formatSize(details.bytesRead)}`;
+      if (details.truncated) text += theme.fg('warning', ' (truncated)');
+      text += `\n${theme.fg('dim', `Full output: ${details.path}`)}`;
+      if (expanded) {
+        const output = result.content
+          .map((content) => (content.type === 'text' ? content.text : '[image content]'))
+          .join('\n');
+        text += `\n${theme.fg('toolOutput', output.split('\n').slice(0, 30).join('\n'))}`;
+      }
+      return new Text(text, 0, 0);
+    },
+  });
+
+  pi.registerTool<typeof BgKillParams, BgKillDetails>({
+    name: 'bg_kill',
+    label: 'Background Kill',
+    description:
+      'Stop a running background task by ID. Fails loudly if the task is unknown or already finished.',
+    promptSnippet: 'Stop a running background task by ID',
+    promptGuidelines: [
+      'Use bg_kill when the user asks to stop a background task or when a bg_run command is no longer needed.',
+    ],
+    parameters: BgKillParams,
+    async execute(_toolCallId, params) {
+      const task = registry.resolveTask(params.taskId);
+      await registry.stopTask(task, 'user');
+      const message = `Killed background task ${taskDisplayName(task)} (${task.id}). Output: ${task.outputPath}`;
+      return {
+        content: textContent(message),
+        details: { task: registry.snapshot(task), message },
+      };
+    },
+    renderCall(args, theme) {
+      return new Text(
+        `${theme.fg('toolTitle', theme.bold('bg_kill '))}${theme.fg('accent', args.taskId)}`,
+        0,
+        0,
+      );
+    },
+    renderResult(result, _options, theme) {
+      const { task } = result.details;
+      return new Text(
+        `${theme.fg('warning', '■ killed')} ${theme.fg('accent', taskDisplayName(task))} ${theme.fg('dim', `(${task.id})`)}\n${theme.fg('dim', `Output: ${task.outputPath}`)}`,
+        0,
+        0,
+      );
+    },
+  });
 }
