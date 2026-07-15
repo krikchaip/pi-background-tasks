@@ -107,7 +107,6 @@ function renderPlainResult(result: TextToolResult, _options: ToolRenderResultOpt
 export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 	const seenTaskIds = new Set<string>();
 	let currentCtx: ExtensionContext | undefined;
-	let dockOpen = false;
 	let statusInterval: NodeJS.Timeout | undefined;
 	let latestKnownVersion: string | undefined;
 	let updateCheckStarted = false;
@@ -159,13 +158,13 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const parts: string[] = [];
-			if (running.length > 0) parts.push(`${running.length} running`);
-			if (unseenFailed.length > 0) parts.push(`${unseenFailed.length} failed`);
-			if (unseenStopped.length > 0) parts.push(`${unseenStopped.length} stopped`);
-			if (unseenDone.length > 0) parts.push(`${unseenDone.length} done`);
-			const entryHint = dockOpen ? "focused" : `Shift↓${unseenFinishedCount > 0 ? " · /bg-clear" : ""}`;
-			const segments = [...parts, entryHint];
+			const statuses = [
+				running.length > 0 ? `${running.length}▶` : undefined,
+				unseenFailed.length > 0 ? `${unseenFailed.length}✗` : undefined,
+				unseenStopped.length > 0 ? `${unseenStopped.length}■` : undefined,
+				unseenDone.length > 0 ? `${unseenDone.length}✓` : undefined,
+			].filter((status): status is string => status !== undefined).join(" ");
+			const segments = [statuses];
 			if (updateSegment) segments.push(updateSegment);
 			const label = ` bg ${segments.join(" · ")} `;
 			ctx.ui.setStatus("background-tasks", statusText(ctx.ui.theme, label));
@@ -186,7 +185,6 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 			ctx.ui.notify("Background task manager requires an interactive Pi UI. Use /jobs, /logs, or the bg_status/bg_logs tools in non-interactive mode.", "error");
 			return;
 		}
-		dockOpen = true;
 		updateUi(ctx);
 		try {
 			await ctx.ui.custom<TaskManagerResult>(
@@ -237,7 +235,6 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 				},
 			);
 		} finally {
-			dockOpen = false;
 			updateUi(ctx);
 		}
 	}
