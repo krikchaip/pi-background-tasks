@@ -47,6 +47,49 @@ const PACKAGE_NAME = packageInfo.name ?? "pi-background-tasks";
 const PACKAGE_VERSION = packageInfo.version;
 const STATUS_COLOR: ThemeColor | `#${string}` = "#00afaf";
 const ANSI_RESET = "\x1b[0m";
+// pi-cc-tools' default fixed tool-branch color; Pi exposes no shared token for it.
+const TOOL_BRANCH_FG = "\x1b[38;2;72;72;72m";
+const ANSI_FG_RESET = "\x1b[39m";
+
+function notificationColor(status: BgTaskSnapshot["status"]): ThemeColor {
+	if (status === "completed") return "success";
+	if (status === "failed") return "error";
+	if (status === "killed") return "warning";
+	return "accent";
+}
+
+function notificationLabel(status: BgTaskSnapshot["status"]): string {
+	if (status === "killed") return "Stopped";
+	return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
+}
+
+function notificationIcon(status: BgTaskSnapshot["status"]): string {
+	if (status === "completed") return "✓";
+	if (status === "failed") return "✗";
+	if (status === "killed") return "■";
+	return "●";
+}
+
+function notificationDuration(task: BgTaskSnapshot | undefined): string {
+	if (!task?.endTime) return "—";
+	const milliseconds = Math.max(0, task.endTime - task.startTime);
+	if (milliseconds < 60_000) return `${Math.max(0.1, Math.round(milliseconds / 100) / 10)}s`;
+	return `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`;
+}
+
+function notificationOutputSize(task: BgTaskSnapshot | undefined): string {
+	return task?.bytesWritten ? formatSize(task.bytesWritten) : "no output";
+}
+
+function renderBackgroundTaskNotification(task: BgTaskSnapshot | undefined, theme: Theme): Text {
+	const status = task?.status ?? "completed";
+	const exitCode = status === "failed" && task?.exitCode !== undefined && task.exitCode !== null ? ` · exit ${task.exitCode}` : "";
+	const name = truncateChars(task ? taskDisplayName(task) : "Background task", 48);
+	const headline = `${theme.fg(notificationColor(status), theme.bold(`${notificationIcon(status)} ${notificationLabel(status)}${exitCode}`))} ${theme.fg("customMessageText", name)}`;
+	const logs = theme.fg("dim", `/logs ${task?.id ?? "background task"}`);
+	const detail = theme.fg("dim", `${notificationDuration(task)} · ${notificationOutputSize(task)} · `) + logs;
+	return new Text(` ${headline}\n ${TOOL_BRANCH_FG}└─${ANSI_FG_RESET} ${detail}`, 0, 0);
+}
 
 function isHexColor(color: ThemeColor | `#${string}`): color is `#${string}` {
 	return color.startsWith("#");
@@ -240,14 +283,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.registerMessageRenderer<BgTaskSnapshot>("background-task-notification", (message, _options, theme) => {
-		const task = message.details;
-		const status = task?.status ?? "completed";
-		const color: ThemeColor = status === "completed" ? "success" : status === "failed" ? "error" : status === "killed" ? "warning" : "accent";
-		const id = task?.id ?? "background task";
-		const name = task ? taskDisplayName(task) : "Background task";
-		const output = task?.outputPath ? `\n${theme.fg("dim", `Output: ${task.outputPath}`)}` : "";
-		const error = task?.error ? `\n${theme.fg("error", task.error)}` : "";
-		return new Text(`${theme.fg(color, `[bg ${status}]`)} ${theme.fg("accent", name)} ${theme.fg("dim", `(${id})`)}${output}${error}`, 0, 0);
+		return renderBackgroundTaskNotification(message.details, theme);
 	});
 
 	async function scheduleUpdateCheck(ctx: ExtensionContext): Promise<void> {
