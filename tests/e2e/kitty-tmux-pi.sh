@@ -72,7 +72,9 @@ run_case() {
     return 1
   }
 
-  wait_for "0.0%/128k"
+  # The scripted provider's context limit changes across Pi releases. The usage prefix
+  # confirms the interactive footer has rendered without tying this UI test to that limit.
+  wait_for "0.0%/"
   for i in $(seq -w 1 18); do
     tmux send-keys -t "$session" "/bg --name 'UNDERLAY ROW $i' printf 'UNDERLAY-ROW-$i'" Enter
     sleep 0.18
