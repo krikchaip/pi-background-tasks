@@ -103,6 +103,7 @@ function assertExplicitBackground(lines: string[]) {
 			const params = (match[1] || "0").split(";").map(Number);
 			for (let paramIndex = 0; paramIndex < params.length; paramIndex++) {
 				const param = params[paramIndex];
+				if (param === undefined) continue;
 				if (param === 38 || param === 48) {
 					if (param === 48) backgroundActive = true;
 					const mode = params[paramIndex + 1];
