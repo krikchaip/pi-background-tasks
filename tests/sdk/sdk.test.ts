@@ -69,6 +69,7 @@ function resolvePiCli(): string | undefined {
 
 interface SdkHarnessOptions {
   eventBus?: EventBus | undefined;
+  experimentalFeatures?: boolean | undefined;
 }
 
 async function harness(options: SdkHarnessOptions = {}) {
@@ -91,7 +92,15 @@ async function harness(options: SdkHarnessOptions = {}) {
     noThemes: true,
     ...(options.eventBus === undefined ? {} : { eventBus: options.eventBus }),
   });
-  await loader.reload();
+  const experimentalFeaturesEnv = 'PI_BG_ENABLE_EXPERIMENTAL_FEATURES';
+  const previousExperimentalFeatures = process.env[experimentalFeaturesEnv];
+  if (options.experimentalFeatures === true) process.env[experimentalFeaturesEnv] = '1';
+  else Reflect.deleteProperty(process.env, experimentalFeaturesEnv);
+  try {
+    await loader.reload();
+  } finally {
+    restoreEnvValue(experimentalFeaturesEnv, previousExperimentalFeatures);
+  }
   const modelRuntime = await ModelRuntime.create({
     authPath: join(agentDir, 'auth.json'),
     modelsPath: null,
@@ -592,6 +601,39 @@ void describe('sdk', () => {
     }
   });
 
+  void it('registers optional tools and fusion commands only when explicitly enabled', async () => {
+    const disabled = await harness();
+    const enabled = await harness({ experimentalFeatures: true });
+    try {
+      const optionalTools = ['bg_run_pi_attested', 'fusion_brainstorm'];
+      const fusionCommands = ['fusion', 'fusion-models'];
+      for (const name of optionalTools) {
+        assert.equal(disabled.session.getToolDefinition(name), undefined, `${name} must be hidden`);
+        assert.ok(enabled.session.getToolDefinition(name), `${name} must be registered`);
+      }
+      const disabledCommands = disabled.session.extensionRunner
+        .getRegisteredCommands()
+        .map((command) => command.invocationName);
+      const enabledCommands = enabled.session.extensionRunner
+        .getRegisteredCommands()
+        .map((command) => command.invocationName);
+      for (const name of fusionCommands) {
+        assert.ok(!disabledCommands.includes(name), `/${name} must be hidden`);
+        assert.ok(enabledCommands.includes(name), `/${name} must be registered`);
+      }
+      const disabledPrompt = disabled.session.extensionRunner.createContext().getSystemPrompt();
+      const enabledPrompt = enabled.session.extensionRunner.createContext().getSystemPrompt();
+      assert.doesNotMatch(disabledPrompt, /bg_run_pi_attested|fusion_brainstorm|\/fusion/);
+      assert.match(enabledPrompt, /bg_run_pi_attested/);
+      assert.match(enabledPrompt, /fusion_brainstorm/);
+    } finally {
+      await disabled.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+      disabled.session.dispose();
+      await enabled.session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+      enabled.session.dispose();
+    }
+  });
+
   void it('BUG-181 exposes an event-driven prompt contract and truthful launch receipts', async () => {
     const { session } = await harness();
     try {
@@ -817,7 +859,9 @@ void describe('sdk', () => {
 
   void it('runs the structured bg_run_pi_attested tool and writes a complete flat attestation', async (t) => {
     if (skipWin32PiPathFixture(t, 'attested')) return;
-    const { session, cwd, modelRegistry, modelRuntime } = await harness();
+    const { session, cwd, modelRegistry, modelRuntime } = await harness({
+      experimentalFeatures: true,
+    });
     const oldPath = process.env['PATH'];
     try {
       await initCleanGit(cwd);

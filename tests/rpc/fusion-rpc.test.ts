@@ -216,6 +216,7 @@ async function withRpc(
     PATH: `${fake.binDir}${delimiter}${process.env['PATH'] ?? ''}`,
     PI_CODING_AGENT_DIR: agentDir,
     PI_BG_SCRIPTED_API_KEY: 'scripted-api-key',
+    PI_BG_ENABLE_EXPERIMENTAL_FEATURES: '1',
     PI_BG_SCRIPTED_SCENARIO: 'display-only-bg',
     NPM_CONFIG_CACHE: '/tmp/pi-npm-cache',
   };

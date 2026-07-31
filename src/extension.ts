@@ -73,6 +73,11 @@ const ANSI_RESET = '\x1b[0m';
 // Pi exposes no shared token for the tool-branch color.
 const TOOL_BRANCH_FG = '\x1b[38;2;72;72;72m';
 const ANSI_FG_RESET = '\x1b[39m';
+const EXPERIMENTAL_FEATURES_ENV = 'PI_BG_ENABLE_EXPERIMENTAL_FEATURES';
+
+function experimentalFeaturesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[EXPERIMENTAL_FEATURES_ENV] === '1';
+}
 
 function notificationColor(status: BgTaskSnapshot['status']): ThemeColor {
   if (status === 'completed') return 'success';
@@ -265,7 +270,8 @@ function renderPlainResult(result: TextToolResult, options: ToolRenderResultOpti
 }
 
 export default function backgroundTasksExtension(pi: ExtensionAPI): void {
-  registerFusionExtension(pi);
+  const experimentalFeatures = experimentalFeaturesEnabled();
+  if (experimentalFeatures) registerFusionExtension(pi);
 
   const seenTaskIds = new Set<string>();
   let currentCtx: ExtensionContext | undefined;
@@ -780,7 +786,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerTool<typeof BgPiAttestedParams, BgRunDetails>({
+  experimentalFeatures && pi.registerTool<typeof BgPiAttestedParams, BgRunDetails>({
     name: 'bg_run_pi_attested',
     label: 'Attested Pi Run',
     description:

@@ -36,6 +36,7 @@ const envKeys = [
   'PATH',
   'PI_CODING_AGENT_DIR',
   'PI_BG_FUSION_TEST_KEY',
+  'PI_BG_ENABLE_EXPERIMENTAL_FEATURES',
   'PI_SESSION_ID',
   'PI_PROVIDER',
   'PI_MODEL',
@@ -189,6 +190,7 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
   await mkdir(agentDir, { recursive: true });
   process.env['PI_CODING_AGENT_DIR'] = agentDir;
   process.env['PI_BG_FUSION_TEST_KEY'] = 'test-key';
+  process.env['PI_BG_ENABLE_EXPERIMENTAL_FEATURES'] = '1';
   process.env['PI_SESSION_ID'] = 'stale-session';
   process.env['PI_PROVIDER'] = 'stale-provider';
   process.env['PI_MODEL'] = 'stale-model';
