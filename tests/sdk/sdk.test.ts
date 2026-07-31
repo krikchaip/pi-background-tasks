@@ -1578,7 +1578,7 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
         if (footer?.includes('⬆ v999.0.0 /bg-update')) break;
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      assert.match(footer ?? '', /bg \u2b06 v999\.0\.0 \/bg-update/);
+      assert.match(stripSgr(footer ?? ''), /bg \u2b06 v999\.0\.0 \/bg-update/);
 
       // Append-to-active-footer path: segment trails the running/entry-hint status.
       const running = await exec(session, 'bg_run', {

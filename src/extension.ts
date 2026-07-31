@@ -124,7 +124,13 @@ function footerLabel(value: string): string {
 }
 
 function footerText(theme: Theme | undefined, color: ThemeColor, value: string): string {
-  return theme ? theme.fg(color, value) : value;
+  if (!theme) return value;
+  try {
+    return theme.fg(color, value);
+  } catch {
+    // Headless hosts can expose a Theme before its terminal palette is initialized.
+    return value;
+  }
 }
 
 function footerStatus(
