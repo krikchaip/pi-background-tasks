@@ -390,6 +390,22 @@ void describe('BackgroundTaskRegistry', () => {
     }
   });
 
+  void it('uses Pi shell configuration instead of the ambient shell', async () => {
+    const h = await createHarness({ platform: 'darwin', env: { SHELL: '/opt/homebrew/bin/nu' } });
+    try {
+      const ctx = {
+        ...h.ctx,
+        piShell: { shell: '/opt/homebrew/bin/bash', args: ['-c'] },
+      } as BackgroundTaskContext;
+      await h.registry.startTask(ctx, 'echo shell', { name: 'Configured Shell' });
+      const spawn = lastSpawn(h);
+      assert.equal(spawn.shell, '/opt/homebrew/bin/bash');
+      assert.deepEqual(spawn.args, ['-c', 'echo shell']);
+    } finally {
+      await cleanup(h.root);
+    }
+  });
+
   void it('uses explicit isAgent to decide Pi telemetry wrapping', async () => {
     assert.equal(commandMayLaunchPiAgent('pi -p hello'), true);
     assert.equal(

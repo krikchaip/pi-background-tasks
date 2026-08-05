@@ -535,6 +535,14 @@ export interface ShellInvocation {
   args: string[];
   dialect: ShellDialect;
   windowsVerbatimArguments: boolean;
+  stdinCommand?: string | undefined;
+}
+
+/** Pi's resolved shell configuration for a task session. */
+export interface PiShellConfig {
+  shell: string;
+  args: string[];
+  commandTransport?: 'argv' | 'stdin' | undefined;
 }
 
 export class ShellInvocationError extends Error {
@@ -630,7 +638,21 @@ export function shellInvocation(
   command: string,
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
+  piShell?: PiShellConfig,
 ): ShellInvocation {
+  if (piShell !== undefined) {
+    return {
+      shell: piShell.shell,
+      args:
+        piShell.commandTransport === 'stdin'
+          ? [...piShell.args]
+          : [...piShell.args, command],
+      dialect: 'posix',
+      windowsVerbatimArguments: false,
+      ...(piShell.commandTransport === 'stdin' ? { stdinCommand: command } : {}),
+    };
+  }
+
   if (platform !== 'win32') {
     const shell = env['SHELL'];
     return posixShellInvocation(command, shell && shell.length > 0 ? shell : '/bin/sh');

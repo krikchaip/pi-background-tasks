@@ -115,7 +115,7 @@ async function harness(options: SdkHarnessOptions = {}) {
     modelRuntime,
     noTools: 'builtin',
   });
-  return { session, cwd, modelRegistry, modelRuntime };
+  return { session, cwd, agentDir, modelRegistry, modelRuntime };
 }
 
 type JsonObject = Record<PropertyKey, unknown>;
@@ -1536,16 +1536,15 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
     }
   });
 
-  void it('fails spawn errors loudly and writes failure metadata', async () => {
-    const previousShell = process.env['SHELL'];
-    const previousComSpec = process.env['ComSpec'];
-    if (process.platform === 'win32') {
-      process.env['ComSpec'] = 'C:\\definitely\\missing\\pi-bg-shell.exe';
-    } else {
-      process.env['SHELL'] = '/definitely/missing/pi-bg-shell';
-    }
-    const { session } = await harness();
+  void it('fails configured-shell spawn errors loudly and writes failure metadata', async () => {
+    const previousAgentDir = process.env['PI_CODING_AGENT_DIR'];
+    const { session, agentDir } = await harness();
     try {
+      const nonExecutableShell = join(agentDir, 'not-executable-shell');
+      await writeFile(nonExecutableShell, '#!/bin/sh\n', 'utf8');
+      await chmod(nonExecutableShell, 0o600);
+      await writeFile(agentDir + '/settings.json', JSON.stringify({ shellPath: nonExecutableShell }));
+      process.env['PI_CODING_AGENT_DIR'] = agentDir;
       const r = await exec(session, 'bg_run', {
         isAgent: false,
         name: 'Bad Shell',
@@ -1555,13 +1554,12 @@ console.log(JSON.stringify({ type: "message_end", message: secondMessage }));
       });
       const t = await wait(session, taskFromResult(r).id);
       assert.equal(t.status, 'failed');
-      assert.match(t.error ?? '', /ENOENT|no such file/i);
+      assert.match(t.error ?? '', /EACCES|permission denied/i);
       const metadataPath = metadataPathFor(t);
       const metadata = await readJsonWithStatus(metadataPath, 'failed');
       assert.equal(metadata['status'], 'failed');
     } finally {
-      restoreEnvValue('SHELL', previousShell);
-      restoreEnvValue('ComSpec', previousComSpec);
+      restoreEnvValue('PI_CODING_AGENT_DIR', previousAgentDir);
       await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
       session.dispose();
     }

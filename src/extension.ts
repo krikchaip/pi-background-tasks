@@ -6,7 +6,7 @@ import type {
   ThemeColor,
   ToolRenderResultOptions,
 } from '@earendil-works/pi-coding-agent';
-import { formatSize } from '@earendil-works/pi-coding-agent';
+import { formatSize, getShellConfig, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { Text, type KeyId } from '@earendil-works/pi-tui';
 import { Type, type Static } from 'typebox';
 import {
@@ -77,6 +77,11 @@ const EXPERIMENTAL_FEATURES_ENV = 'PI_BG_ENABLE_EXPERIMENTAL_FEATURES';
 
 function experimentalFeaturesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[EXPERIMENTAL_FEATURES_ENV] === '1';
+}
+
+function backgroundTaskContext(ctx: ExtensionContext) {
+  const shellPath = SettingsManager.create(ctx.cwd).getShellPath();
+  return { ...ctx, piShell: getShellConfig(shellPath) };
 }
 
 function notificationColor(status: BgTaskSnapshot['status']): ThemeColor {
@@ -295,7 +300,8 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
   eventService = installBackgroundTaskExtensionApi({
     events: pi.events,
     registry,
-    getContext: () => currentCtx,
+    getContext: () =>
+      currentCtx === undefined ? undefined : backgroundTaskContext(currentCtx),
     isShuttingDown: () => registry.isShuttingDown(),
   });
 
@@ -386,7 +392,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
     options: StartTaskOptions = {},
   ): Promise<BgTask> {
     currentCtx = ctx;
-    return registry.startTask(ctx, command, options);
+    return registry.startTask(backgroundTaskContext(ctx), command, options);
   }
 
   async function startAttestedPiTask(

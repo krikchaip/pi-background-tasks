@@ -27,6 +27,7 @@ import {
   type BgTaskSnapshot,
   type JsonObject,
   type KillKind,
+  type PiShellConfig,
   type StartAttestedPiTaskOptions,
   type StartTaskOptions,
   type TaskContextUsage,
@@ -83,14 +84,20 @@ export interface BackgroundTaskContext {
   sessionId?: string;
   modelRegistry: BackgroundTaskModelRegistry;
   model?: ExtensionContext['model'] | undefined;
+  piShell?: PiShellConfig | undefined;
 }
 
 interface OutputEventSource {
   on(event: 'data', listener: (data: Buffer | string) => void): unknown;
 }
 
+interface InputEventSink {
+  end(data?: string): unknown;
+}
+
 export interface BackgroundTaskChildProcess {
   pid?: number | undefined;
+  stdin?: InputEventSink | null | undefined;
   stdout?: OutputEventSource | null | undefined;
   stderr?: OutputEventSource | null | undefined;
   kill(signal?: NodeJS.Signals): boolean;
@@ -761,7 +768,7 @@ export class BackgroundTaskRegistry {
       throw new Error('Cannot start a background task while Pi is shutting down');
 
     const isAgent = options.isAgent ?? false;
-    const baseInvocation = shellInvocation(normalizedCommand, this.platform, this.env);
+    const baseInvocation = shellInvocation(normalizedCommand, this.platform, this.env, ctx.piShell);
     const piTelemetryRequested = isAgent && commandMayLaunchPiAgent(normalizedCommand, this.env);
     const piTelemetryLaunch =
       piTelemetryRequested && baseInvocation.dialect === 'posix'
@@ -851,11 +858,11 @@ export class BackgroundTaskRegistry {
       const invocation =
         commandToSpawn === normalizedCommand
           ? baseInvocation
-          : shellInvocation(commandToSpawn, this.platform, this.env);
+          : shellInvocation(commandToSpawn, this.platform, this.env, ctx.piShell);
       const child = this.spawn(invocation.shell, invocation.args, {
         cwd: ctx.cwd,
         detached: this.platform !== 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [invocation.stdinCommand === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         env: this.env,
         windowsHide: true,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -863,6 +870,7 @@ export class BackgroundTaskRegistry {
 
       task.child = child;
       task.pid = child.pid;
+      if (invocation.stdinCommand !== undefined) child.stdin?.end(invocation.stdinCommand);
 
       child.stdout?.on('data', (data) => {
         this.appendChildOutput(task, data, 'stdout');
