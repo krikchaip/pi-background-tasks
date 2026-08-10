@@ -352,7 +352,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
         ctx.ui.setStatus(
           'background-tasks',
           updateSegment
-            ? `${footerLabel(' bg ')}${footerText(ctx.ui.theme, 'accent', updateSegment)} `
+            ? `${footerLabel('bg')} ${footerText(ctx.ui.theme, 'accent', updateSegment)}`
             : undefined,
         );
         return;
@@ -376,7 +376,7 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
         .join(' ');
       const segments = [statuses];
       if (updateSegment) segments.push(footerText(ctx.ui.theme, 'accent', updateSegment));
-      const label = `${footerLabel(' bg ')}${segments.join(' · ')} `;
+      const label = `${footerLabel('bg')} ${segments.join(' · ')}`;
       ctx.ui.setStatus('background-tasks', label);
     } catch (error) {
       console.error(
