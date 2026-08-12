@@ -1,7 +1,7 @@
 {
   "name": "pi-background-tasks",
   "version": "0.7.4",
-  "description": "Pi extension package for background shell tasks plus five-model fusion brainstorming: bg_run tools, /bg commands, /fusion, fusion_brainstorm, model selector UI, bounded logs, kill/timeout safety, and completion wakeups.",
+  "description": "Pi extension package for tracked background shell tasks: bounded logs, kill/timeout safety, task dock, and completion wakeups.",
   "type": "module",
   "license": "ISC",
   "author": "Ismail <ismailsalikhodjaev@gmail.com>",
@@ -15,10 +15,7 @@
     "background-tasks",
     "coding-agent",
     "shell",
-    "tasks",
-    "fusion",
-    "brainstorm",
-    "multi-model"
+    "tasks"
   ],
   "homepage": "https://github.com/ismailsaleekh/pi-background-tasks#readme",
   "repository": {
@@ -52,11 +49,10 @@
     "test:e2e:kitty": "bash tests/e2e/kitty-tmux-pi.sh",
     "test:full": "npm run test && npm run test:pty && npm run test:agent-loop",
     "smoke": "tsx scripts/smoke.ts",
-    "smoke:large-context": "tsx scripts/large-context-smoke.ts",
     "pack:dry-run": "npm pack --dry-run",
-    "lint": "cd ../.. && npm run quality:ts:lint",
-    "format:check": "cd ../.. && npm run quality:ts:format",
-    "test:compat": "tsx scripts/test-compat.ts"
+    "test:compat": "tsx scripts/test-compat.ts",
+    "lint": "npm run typecheck && npm run test:type-safety",
+    "format:check": "git diff --check"
   },
   "pi": {
     "extensions": [
@@ -64,8 +60,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.75.5 || ^0.81.1 || ^0.82.1 || ^0.83.0",
-    "@earendil-works/pi-tui": "^0.75.5 || ^0.81.1 || ^0.82.1 || ^0.83.0",
+    "@earendil-works/pi-coding-agent": "^0.75.5 || ^0.81.1 || ^0.82.1 || ^0.83.0 || ^0.84.0",
+    "@earendil-works/pi-tui": "^0.75.5 || ^0.81.1 || ^0.82.1 || ^0.83.0 || ^0.84.0",
     "typebox": "*"
   },
   "devDependencies": {

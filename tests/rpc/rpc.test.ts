@@ -2,17 +2,17 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { parseJsonText } from '../../src/core/common.js';
-import { piLaunchArgv, resolvePiLaunch } from '../../src/core/pi-launch.js';
 import { isolatedTestEnv } from '../../src/testing/normalize.js';
 
-// npm installs `pi` as a pi.cmd shim on Windows, and a shell-less spawn does not
-// consult PATHEXT, so spawning the bare name fails with ENOENT. Production solves
-// this by resolving the Pi package bin and launching it through Node; reusing that
-// resolver keeps the harness aligned with real launch behaviour on every platform.
-const piLaunch = resolvePiLaunch();
+// Launch Pi through its JavaScript entry point. This avoids platform-specific
+// npm shims while testing the installed host package. Pi exposes its root only
+// to ESM import resolution, so CommonJS require.resolve cannot locate it.
+const piIndex = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
+const piCli = join(dirname(piIndex), 'cli.js');
 
 const extensionPath = resolve('extensions/background-tasks.ts');
 
@@ -85,8 +85,8 @@ class RPC {
     env: Record<string, string> = {},
   ) {
     this.proc = spawn(
-      piLaunch.executable,
-      piLaunchArgv(piLaunch, [
+      process.execPath,
+      [piCli,
         '--mode',
         'rpc',
         '--no-session',
@@ -98,7 +98,7 @@ class RPC {
         '--no-prompt-templates',
         '--no-context-files',
         '--no-tools',
-      ]),
+      ],
       {
         cwd,
         env: {
@@ -251,9 +251,10 @@ void describe('rpc', () => {
         'tasks',
         'bg-tasks',
         'bg-clear',
-        'bg-update',
       ])
         assert.ok(names.includes(name), name);
+      for (const removed of ['bg-update', 'fusion', 'fusion-models'])
+        assert.ok(!names.includes(removed), `${removed} must be absent`);
       await rpc.prompt(
         `/bg --name "RPC Echo" ${await writeExactlyScript(cwd, 'rpc-echo', 'rpc-ok')}`,
       );
@@ -313,18 +314,6 @@ void describe('rpc', () => {
       await rpc.wait(notifyWith(/Showing tail 1 B|Full output/));
       await rpc.prompt('/logs b 10');
       await rpc.wait(notifyWith(/Background logs error:[\s\S]*Ambiguous task ID prefix/));
-    });
-  });
-
-  void it('prints non-installing /bg-update instructions offline', async () => {
-    await withRpc(async (rpc) => {
-      const response = await rpc.prompt('/bg-update');
-      assert.equal(field(response, 'success'), true);
-      await rpc.wait(
-        notifyWith(
-          /pi install npm:pi-background-tasks@latest[\s\S]*does not install or self-update/,
-        ),
-      );
     });
   });
 

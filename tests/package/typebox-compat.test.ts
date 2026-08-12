@@ -11,7 +11,7 @@ import { parseJsonText } from '../../src/core/common.js';
 // `URL.pathname` yields `/D:/...` on Windows, which then joins into `D:\D:\...`.
 const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
 
-/** TypeBox APIs removed in the 1.3.x line bundled by Pi 0.83.0. */
+/** TypeBox APIs removed in the 1.3.x line bundled by current Pi releases. */
 const REMOVED_TYPEBOX_APIS = [
   'Type.Base',
   'Type.Awaited',
@@ -51,7 +51,7 @@ void describe('TypeBox compatibility', () => {
     );
     assert.ok(isRecord(installed));
     const version = String(installed['version']);
-    assert.match(version, /^1\.3\./, `expected the Pi 0.83 TypeBox 1.3.x line, saw ${version}`);
+    assert.match(version, /^1\.3\./, `expected the current Pi TypeBox 1.3.x line, saw ${version}`);
 
     const manifest = parseJsonText(
       await readFile(join(packageRoot, 'package.json'), 'utf8'),
@@ -71,7 +71,7 @@ void describe('TypeBox compatibility', () => {
     assert.equal(Array.isArray(bundled) && bundled.includes('typebox'), false);
   });
 
-  void it('declares Pi and TUI 0.83 peer compatibility while keeping supported older lines', async () => {
+  void it('declares Pi and TUI 0.83–0.84 compatibility while keeping supported older lines', async () => {
     const manifest = parseJsonText(
       await readFile(join(packageRoot, 'package.json'), 'utf8'),
     );
@@ -80,13 +80,13 @@ void describe('TypeBox compatibility', () => {
     assert.ok(isRecord(peers));
     for (const key of ['@earendil-works/pi-coding-agent', '@earendil-works/pi-tui']) {
       const range = String(peers[key]);
-      for (const supported of ['0.75.5', '0.81.1', '0.82.1', '0.83.0']) {
+      for (const supported of ['0.75.5', '0.81.1', '0.82.1', '0.83.0', '0.84.0']) {
         assert.ok(range.includes(supported), `${key} must still declare ${supported}: ${range}`);
       }
     }
   });
 
-  void it('uses no TypeBox API removed by the Pi 0.83 bundled version', async () => {
+  void it('uses no TypeBox API removed by the current Pi bundled version', async () => {
     const violations: string[] = [];
     for (const file of await sourceFiles()) {
       const text = await readFile(file, 'utf8');
@@ -100,54 +100,23 @@ void describe('TypeBox compatibility', () => {
     assert.deepEqual(violations, []);
   });
 
-  void it('compiles the exact shipped tool schemas under TypeBox 1.3', async () => {
-    // Mirrors the real registered fusion_brainstorm parameter schema.
-    const FusionBrainstormParams = Type.Object(
-      {
-        prompt: Type.String({ description: 'Prompt to run through the fusion workflow.' }),
-      },
-      { additionalProperties: false },
-    );
-    const compiled = Compile(FusionBrainstormParams);
-    assert.equal(compiled.Check({ prompt: 'ok' }), true);
-    assert.equal(compiled.Check({ prompt: 'ok', extra: 1 }), false);
-    assert.equal(compiled.Check({ prompt: 1 }), false);
-    assert.equal(Value.Check(FusionBrainstormParams, { prompt: 'ok' }), true);
-  });
-
-  void it('compiles nullable-array schemas matching Fusion projection shapes', () => {
-    // Nullable array plus nullable string, as used by branch_filter.tool_call_id
-    // and the omission ledger's optional tool metadata.
-    const Nullable = Type.Object(
-      {
-        tool_call_id: Type.Union([Type.String(), Type.Null()]),
-        entries: Type.Union([Type.Array(Type.String()), Type.Null()]),
-        counts: Type.Array(Type.Object({ name: Type.String(), calls: Type.Number() })),
-      },
-      { additionalProperties: false },
-    );
-    const compiled = Compile(Nullable);
-    assert.equal(
-      compiled.Check({ tool_call_id: null, entries: null, counts: [] }),
-      true,
-    );
-    assert.equal(
-      compiled.Check({ tool_call_id: 'c1', entries: ['a'], counts: [{ name: 'read', calls: 1 }] }),
-      true,
-    );
-    assert.equal(
-      compiled.Check({ tool_call_id: null, entries: [1], counts: [] }),
-      false,
-      'array element types must still be enforced',
-    );
-    assert.equal(
-      compiled.Check({ tool_call_id: null, entries: undefined, counts: [] }),
-      false,
-      'a nullable array is still required',
-    );
-    type NullableValue = Static<typeof Nullable>;
-    const typed: NullableValue = { tool_call_id: null, entries: ['x'], counts: [] };
-    assert.deepEqual(typed.entries, ['x']);
+  void it('compiles the shell-task bg_run schema under TypeBox 1.3', () => {
+    const BgRunParams = Type.Object({
+      name: Type.String(),
+      command: Type.String(),
+      description: Type.Optional(Type.String()),
+      timeoutSeconds: Type.Optional(Type.Number()),
+      notifyOnCompletion: Type.Optional(Type.Boolean()),
+      triggerOnCompletion: Type.Optional(Type.Boolean()),
+    });
+    const compiled = Compile(BgRunParams);
+    const input = { name: 'Tests', command: 'npm test', notifyOnCompletion: true };
+    assert.equal(compiled.Check(input), true);
+    assert.equal(compiled.Check({ name: 'Tests', command: 1 }), false);
+    assert.equal(Value.Check(BgRunParams, input), true);
+    type BgRunValue = Static<typeof BgRunParams>;
+    const typed: BgRunValue = input;
+    assert.equal(typed.command, 'npm test');
   });
 
   void it('keeps Value.Check available for the optional-field shapes the package registers', () => {

@@ -98,8 +98,6 @@ async function createHarness(): Promise<Harness> {
   const ctx: BackgroundTaskContext = {
     cwd,
     sessionId: 'extension-api-unit',
-    modelRegistry: { getAll: () => [] },
-    model: undefined,
   };
   currentCtx = ctx;
   const service = installBackgroundTaskExtensionApi({
@@ -202,8 +200,6 @@ async function createProtocolHarness(
   const ctx: BackgroundTaskContext = {
     cwd,
     sessionId: 'extension-api-protocol-unit',
-    modelRegistry: { getAll: () => [] },
-    model: undefined,
   };
   service = installBackgroundTaskExtensionApi({
     events: bus,
@@ -265,7 +261,6 @@ function requireTask(value: unknown, label: string): BgTaskSnapshot {
     cwd: partial.cwd ?? '',
     startTime: partial.startTime ?? 0,
     bytesWritten: partial.bytesWritten ?? 0,
-    isAgent: partial.isAgent ?? false,
     notified: partial.notified ?? false,
     notifyOnCompletion: partial.notifyOnCompletion ?? false,
     triggerOnCompletion: partial.triggerOnCompletion ?? false,
@@ -395,6 +390,24 @@ void describe('background EventBus protocol', () => {
       assert.equal(unknownPayloadKey.ok, false);
       assert.match(unknownPayloadKey.ok ? '' : unknownPayloadKey.error, /unknown key extra/u);
 
+      const invalidLegacyAgentFlag = await emitRequest(h.bus, {
+        schema_version: BG_REQUEST_SCHEMA,
+        request_id: 'bad-legacy-agent-flag',
+        operation: 'run',
+        payload: {
+          name: 'Bad Legacy Flag',
+          command: 'printf nope',
+          isAgent: 'true',
+          notifyOnCompletion: false,
+          triggerOnCompletion: false,
+        },
+      });
+      assert.equal(invalidLegacyAgentFlag.ok, false);
+      assert.match(
+        invalidLegacyAgentFlag.ok ? '' : invalidLegacyAgentFlag.error,
+        /run\.payload\.isAgent must be boolean/u,
+      );
+
       const malformedPayload = await emitRequest(h.bus, {
         schema_version: BG_REQUEST_SCHEMA,
         request_id: 'bad-run',
@@ -402,7 +415,6 @@ void describe('background EventBus protocol', () => {
         payload: {
           name: 'Bad Run',
           command: 'printf nope',
-          isAgent: false,
           timeoutSeconds: null,
           notifyOnCompletion: true,
           triggerOnCompletion: true,
@@ -445,6 +457,7 @@ void describe('background EventBus protocol', () => {
       expectedStatus: 'completed' | 'failed' | 'killed';
       timeoutMs?: number | undefined;
       timeoutSeconds?: number | undefined;
+      legacyIsAgent?: boolean | undefined;
       onSpawn?: ((child: FakeChild) => void) | undefined;
       afterRun?:
         | ((h: ProtocolHarness, task: BgTaskSnapshot, order: string[]) => Promise<void> | void)
@@ -470,12 +483,12 @@ void describe('background EventBus protocol', () => {
         const payload: Record<string, unknown> = {
           name: `Case ${options.label}`,
           command: echoCommand,
-          isAgent: false,
           notifyOnCompletion: false,
           triggerOnCompletion: false,
         };
         if (options.timeoutSeconds !== undefined)
           payload['timeoutSeconds'] = options.timeoutSeconds;
+        if (options.legacyIsAgent !== undefined) payload['isAgent'] = options.legacyIsAgent;
         const run = await emitRequest(h.bus, {
           schema_version: BG_REQUEST_SCHEMA,
           request_id: `run-${options.label}`,
@@ -485,6 +498,7 @@ void describe('background EventBus protocol', () => {
         assert.equal(run.ok, true, run.ok ? 'ok' : run.error);
         const task = requireTask(run.ok ? run.result : undefined, `${options.label}.run.result`);
         assert.equal(task.command, echoCommand);
+        assert.equal(Object.hasOwn(task, 'isAgent'), false);
         await options.afterRun?.(h, task, order);
         const terminal = await waitForTerminal(
           terminals,
@@ -527,6 +541,12 @@ void describe('background EventBus protocol', () => {
     await runCase({
       label: 'normal',
       expectedStatus: 'completed',
+      afterRun: (h) => h.children[0]?.close(0, null),
+    });
+    await runCase({
+      label: 'legacy-is-agent',
+      expectedStatus: 'completed',
+      legacyIsAgent: true,
       afterRun: (h) => h.children[0]?.close(0, null),
     });
     await runCase({

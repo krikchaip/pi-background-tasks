@@ -82,23 +82,6 @@ void describe('windows integration', { concurrency: false }, () => {
     });
   });
 
-  void it('launches the Pi CLI through node without touching the npm .cmd shim', async () => {
-    requireWindows();
-    const { resolvePiLaunch, piLaunchArgv } = await import('../../src/core/pi-launch.js');
-    const launch = resolvePiLaunch();
-    // Never execute a batch shim: cmd/bat/ps1 cannot preserve argv safely.
-    assert.doesNotMatch(launch.executable.toLowerCase(), /\.(?:cmd|bat|ps1)$/);
-    assert.equal(launch.executable, process.execPath);
-    const argv = piLaunchArgv(launch, ['--version']);
-    const result = spawnSync(launch.executable, argv, {
-      encoding: 'utf8',
-      windowsHide: true,
-      shell: false,
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout.trim(), /\d+\.\d+\.\d+/);
-  });
-
   void it('passes shell metacharacters through structured argv without executing them', async () => {
     requireWindows();
     await withTempDir(async (dir) => {

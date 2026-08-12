@@ -33,7 +33,6 @@ function task(overrides: Partial<BackgroundTaskForUi> = {}): BackgroundTaskForUi
 		cwd: tmpdir(),
 		startTime: now - 1000,
 		bytesWritten: 0,
-		isAgent: false,
 		notified: false,
 		notifyOnCompletion: true,
 		triggerOnCompletion: false,
@@ -269,53 +268,6 @@ describe("BackgroundTasksManager component", () => {
 		}
 	});
 
-	it("renders task-owned context, model, token, and tool telemetry in list/detail rows and placeholder when absent", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-bg-context-"));
-		try {
-			const outputAbsPath = join(dir, "task.output");
-			await writeFile(outputAbsPath, "context-output\n", "utf8");
-			const tasks = [
-				task({
-					id: "bctx00001",
-					name: "Context Task",
-					outputAbsPath,
-					isAgent: true,
-					model: "openai-codex/gpt-5.5",
-					contextUsage: { tokens: 42_000, contextWindow: 200_000, percent: 21 },
-					tokenUsage: { input: 1000, output: 200, cacheRead: 30, cacheWrite: 20, totalTokens: 1250 },
-					toolUsage: { total: 3, failed: 1, byName: { bash: 2, read: 1 } },
-				}),
-				task({ id: "bctx00002", name: "No Context Task", outputAbsPath, startTime: Date.now() - 2000 }),
-			];
-			const h = manager({}, tasks);
-			try {
-				let text = stripAnsi(h.instance.render(120).join("\n"));
-				assert.match(text, /ctx 21\.0%\/200k/);
-				assert.match(text, /model gpt-5\.5/);
-				assert.match(text, /tok 1\.3k/);
-				assert.match(text, /tools 3\/1 failed/);
-				assert.match(text, /ctx —/);
-				h.instance.handleInput("\r");
-				await new Promise((resolve) => setTimeout(resolve, 20));
-				text = stripAnsi(h.instance.render(120).join("\n"));
-				assert.match(text, /Model: openai-codex\/gpt-5\.5/);
-				assert.match(text, /Context: 21\.0% of 200k window \(42k tokens\)/);
-				assert.match(text, /Tokens: input 1\.0k · output 200 · cache read 30 · cache write 20 · total 1\.3k/);
-				assert.match(text, /Tools: 3 total · 1 failed · bash 2 · read 1/);
-				h.instance.handleInput("\x1b[D");
-				h.instance.handleInput("\x1b[B");
-				h.instance.handleInput("\r");
-				await new Promise((resolve) => setTimeout(resolve, 20));
-				text = stripAnsi(h.instance.render(120).join("\n"));
-				assert.match(text, /Model: not reported by this background task/);
-			} finally {
-				h.instance.dispose();
-			}
-		} finally {
-			await rm(dir, { recursive: true, force: true });
-		}
-	});
-
 	it("opens detail, reads bounded tail, refreshes, acts, and returns to list", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "pi-bg-component-"));
 		try {
@@ -363,10 +315,6 @@ describe("BackgroundTasksManager component", () => {
 					outputAbsPath,
 					bytesWritten: 400,
 					description: "Long detail text that would otherwise push the footer below the overlay clip.",
-					model: "openai-codex/gpt-5.5",
-					contextUsage: { tokens: 42_000, contextWindow: 200_000, percent: 21 },
-					tokenUsage: { input: 1000, output: 200, cacheRead: 30, cacheWrite: 20, totalTokens: 1250 },
-					toolUsage: { total: 3, failed: 1, byName: { bash: 2, read: 1 } },
 				})],
 				{ columns: 100, rows: terminalRows },
 			);

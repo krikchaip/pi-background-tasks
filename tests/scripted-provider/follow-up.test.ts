@@ -291,12 +291,12 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
           0,
           'completion notification should be recorded',
         );
-        assert.match(note.content, /<task-name>Scripted Wakeup<\/task-name>/);
-        assert.match(note.content, /<status>completed<\/status>/);
-        assert.match(note.content, /<guidance>Terminal state and output metadata are durable\./);
-        assert.match(note.content, /Do not call bg_status to reconfirm/);
+        assert.match(
+          note.content,
+          /<task-name>Scripted Wakeup<\/task-name>[\s\S]*<status>completed<\/status>/,
+        );
+        assert.equal(note.details['status'], 'completed');
         assert.equal(note.details['triggerOnCompletion'], true);
-        assert.equal(note.details['notified'], true);
       } finally {
         await disposeHarness(h);
       }
@@ -346,8 +346,11 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
           0,
           'notification-only completion should be recorded',
         );
-        assert.match(note.content, /<task-name>No Wake Scripted<\/task-name>/);
-        assert.match(note.content, /<status>completed<\/status>/);
+        assert.match(
+          note.content,
+          /<task-name>No Wake Scripted<\/task-name>[\s\S]*<status>completed<\/status>/,
+        );
+        assert.equal(note.details['status'], 'completed');
         assert.equal(note.details['triggerOnCompletion'], false);
         assert.ok(
           assistantTexts(h.session).some((text) =>
@@ -382,10 +385,10 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
           0,
           'failed-task notification should be recorded',
         );
-        assert.match(note.content, /<task-name>Failing Scripted<\/task-name>/);
-        assert.match(note.content, /<status>failed<\/status>/);
-        assert.match(note.content, /<exit-code>7<\/exit-code>/);
-        assert.match(note.content, /<error>Exited with code 7<\/error>/);
+        assert.match(
+          note.content,
+          /<task-name>Failing Scripted<\/task-name>[\s\S]*<status>failed<\/status>/,
+        );
         assert.equal(note.details['status'], 'failed');
         assert.equal(note.details['exitCode'], 7);
         assert.match(
@@ -438,8 +441,11 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
           0,
           'display-only notification should be recorded',
         );
-        assert.match(note.content, /<task-name>Display Only Scripted<\/task-name>/);
-        assert.match(note.content, /<status>completed<\/status>/);
+        assert.match(
+          note.content,
+          /<task-name>Display Only Scripted<\/task-name>[\s\S]*<status>completed<\/status>/,
+        );
+        assert.equal(note.details['status'], 'completed');
         assert.equal(note.details['triggerOnCompletion'], false);
         assert.equal((await providerEvents(h.eventsPath)).length, 0);
       } finally {

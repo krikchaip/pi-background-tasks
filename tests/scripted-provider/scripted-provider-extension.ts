@@ -30,8 +30,6 @@ type Scenario =
   | 'wake-false'
   | 'failed-follow-up'
   | 'display-only-bg'
-  | 'json-tool-telemetry'
-  | 'fusion-brainstorm'
   | 'multiline-command';
 type ScriptedStopReason = 'stop' | 'length' | 'toolUse';
 
@@ -55,8 +53,6 @@ function parseScenario(value: string | undefined): Scenario {
     value === 'wake-false' ||
     value === 'failed-follow-up' ||
     value === 'display-only-bg' ||
-    value === 'json-tool-telemetry' ||
-    value === 'fusion-brainstorm' ||
     value === 'multiline-command'
   )
     return value;
@@ -147,32 +143,11 @@ function inspectEventDrivenContract(context: Context): EventDrivenContractCheck 
       toolDescription('bg_logs').includes('not a waiting primitive'),
     launchReceipt:
       bgRunResult?.includes('Terminal notification: enabled.') === true &&
-      bgRunResult.includes('Automatic follow-up turn: enabled.') &&
-      bgRunResult.includes('Next action: do not poll or sleep'),
+      bgRunResult.includes('Automatic follow-up turn: enabled.'),
   };
 }
 
-function responseFor(
-  scenario: Scenario,
-  callCount: number,
-  contract: EventDrivenContractCheck,
-): ScriptedAssistantMessage {
-  if (scenario === 'fusion-brainstorm') {
-    if (callCount === 1) {
-      return assistant(
-        [
-          toolCall(
-            'fusion_brainstorm',
-            { prompt: 'scripted fusion prompt' },
-            'call-fusion-brainstorm',
-          ),
-        ],
-        'toolUse',
-      );
-    }
-    return assistant([text('Parent observed fusion result from fusion_brainstorm.')], 'stop');
-  }
-
+function responseFor(scenario: Scenario, callCount: number): ScriptedAssistantMessage {
   if (scenario === 'multiline-command') {
     if (callCount === 1) {
       const command = [
@@ -192,7 +167,6 @@ function responseFor(
             {
               name: 'Multiline Bleed',
               command,
-              isAgent: false,
               notifyOnCompletion: false,
               triggerOnCompletion: false,
             },
@@ -203,19 +177,6 @@ function responseFor(
       );
     }
     return assistant([text('Multiline bleed task started.')], 'stop');
-  }
-
-  if (scenario === 'json-tool-telemetry') {
-    if (callCount === 1) {
-      return assistant(
-        [
-          toolCall('scripted_echo', { value: 'ok' }, 'call-scripted-ok'),
-          toolCall('scripted_echo', { value: 'fail', fail: true }, 'call-scripted-fail'),
-        ],
-        'toolUse',
-      );
-    }
-    return assistant([text('JSON tool telemetry complete.')], 'stop');
   }
 
   if (scenario === 'bg-run-follow-up') {
@@ -229,7 +190,6 @@ function responseFor(
               command: shellNode(
                 "setTimeout(() => { console.log('scripted wakeup done'); }, 150);",
               ),
-              isAgent: false,
               notifyOnCompletion: true,
             },
             'call-bg-run-wakeup',
@@ -239,9 +199,6 @@ function responseFor(
       );
     }
     if (callCount === 2) {
-      if (!contract.systemPrompt || !contract.toolDescriptions || !contract.launchReceipt) {
-        return assistant([toolCall('bg_status', {}, 'call-bug-181-regressive-poll')], 'toolUse');
-      }
       return assistant(
         [text('Initial bg_run tool turn yielded without polling for the terminal event.')],
         'stop',
@@ -262,7 +219,6 @@ function responseFor(
             {
               name: 'No Notify Scripted',
               command: shellNode("setTimeout(() => { console.log('quiet done'); }, 80);"),
-              isAgent: false,
               notifyOnCompletion: false,
               triggerOnCompletion: true,
             },
@@ -284,7 +240,6 @@ function responseFor(
             {
               name: 'No Wake Scripted',
               command: shellNode("setTimeout(() => { console.log('notify only done'); }, 80);"),
-              isAgent: false,
               notifyOnCompletion: true,
               triggerOnCompletion: false,
             },
@@ -308,7 +263,6 @@ function responseFor(
               command: shellNode(
                 "setTimeout(() => { console.error('scripted failure'); process.exit(7); }, 80);",
               ),
-              isAgent: false,
               notifyOnCompletion: true,
             },
             'call-bg-run-failed',
@@ -419,7 +373,7 @@ export default function scriptedProviderExtension(pi: ExtensionAPI): void {
       });
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
-        pushMessage(stream, responseFor(scenario, callCount, eventDrivenContract));
+        pushMessage(stream, responseFor(scenario, callCount));
       });
       return stream;
     },

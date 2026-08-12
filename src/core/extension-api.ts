@@ -24,7 +24,6 @@ export type BackgroundTaskExtensionOperation = 'capabilities' | 'run' | 'status'
 export interface BackgroundTaskExtensionCapabilities {
   api_version: 1;
   run: boolean;
-  run_is_agent: boolean;
   run_completion_trigger: boolean;
   status: boolean;
   logs: boolean;
@@ -35,7 +34,6 @@ export interface BackgroundTaskExtensionCapabilities {
 export const BG_EXTENSION_CAPABILITIES: BackgroundTaskExtensionCapabilities = Object.freeze({
   api_version: 1,
   run: true,
-  run_is_agent: true,
   run_completion_trigger: true,
   status: true,
   logs: true,
@@ -46,7 +44,6 @@ export const BG_EXTENSION_CAPABILITIES: BackgroundTaskExtensionCapabilities = Ob
 export interface BackgroundTaskExtensionRunPayload {
   name: string;
   command: string;
-  isAgent: boolean;
   timeoutSeconds?: number | undefined;
   notifyOnCompletion: boolean;
   triggerOnCompletion: boolean;
@@ -205,13 +202,22 @@ function parseRunPayload(value: unknown): BackgroundTaskExtensionRunPayload {
   const payload = requireRecord(value, 'run.payload');
   assertClosed(
     payload,
-    ['name', 'command', 'isAgent', 'timeoutSeconds', 'notifyOnCompletion', 'triggerOnCompletion'],
+    [
+      'name',
+      'command',
+      'isAgent',
+      'timeoutSeconds',
+      'notifyOnCompletion',
+      'triggerOnCompletion',
+    ],
     'run.payload',
   );
+  // API v1 required this field. Accept and validate it for wire compatibility,
+  // but do not classify or execute the task as an agent.
+  if (hasOwn(payload, 'isAgent')) requireBoolean(payload['isAgent'], 'run.payload.isAgent');
   const out: BackgroundTaskExtensionRunPayload = {
     name: requireNonEmptyString(payload['name'], 'run.payload.name'),
     command: requireNonEmptyString(payload['command'], 'run.payload.command'),
-    isAgent: requireBoolean(payload['isAgent'], 'run.payload.isAgent'),
     notifyOnCompletion: requireBoolean(
       payload['notifyOnCompletion'],
       'run.payload.notifyOnCompletion',
@@ -489,7 +495,6 @@ class InstalledBackgroundTaskExtensionService implements BackgroundTaskExtension
         const payload = runPayload(request.payload);
         const options: StartTaskOptions = {
           name: payload.name,
-          isAgent: payload.isAgent,
           notifyOnCompletion: payload.notifyOnCompletion,
           triggerOnCompletion: payload.triggerOnCompletion,
           terminalPublicationGate,

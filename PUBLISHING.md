@@ -1,67 +1,64 @@
 # Publishing pi-background-tasks
 
-Release checklist for npm publishing and standalone git publishing. The current release candidate is 0.7.4; version 0.7.0 introduced the Fusion public surfaces (`/fusion`, `/fusion-models`, `fusion_brainstorm`) in addition to the background-task surfaces. Do not advertise the GitHub install target until the standalone repository has the exact release commit and tag.
+Release checklist for npm and the standalone git repository.
 
 ## Preconditions
 
-- npm account with publish rights for `pi-background-tasks`.
-- Standalone GitHub repository, expected: `github.com/ismailsaleekh/pi-background-tasks`.
-- Clean worktree.
-- Final repair commit present in the standalone package repository; do not push from automated repair runs unless the operator explicitly requests it.
+- npm publish access for `pi-background-tasks`;
+- a clean worktree;
+- a version bump in `package.json`;
+- the exact release commit in the standalone repository.
+
+Do not push, tag, or publish from an automated run unless the operator explicitly requests it.
 
 ## Verify
 
-```bash
-cd packages/pi-background-tasks
-npm run test
+```nu
+npm run lint
+npm run format:check
 npm run test:full
 npm run smoke
-npm run smoke:large-context
-npm run pack:dry-run
 npm run test:compat
+npm run pack:dry-run
 npm view pi-background-tasks name version --json
 ```
 
-`npm run test:compat` covers exact Pi `0.75.5`, `0.81.1`, `0.82.1`, and `0.83.0`. For each version it verifies the resolved `typebox` is Pi's bundled peer (not a private or nested copy) and scans the installed package bytes for TypeBox APIs removed in the 1.3.x line.
-
-`pi-background-tasks` is already published; bump `package.json` before each npm publish.
+Inspect the dry-run file list. It must contain the shell-task extension and must not contain removed Fusion, update-check, attestation, or agent-telemetry modules.
 
 ## Publish to npm
 
-```bash
-cd packages/pi-background-tasks
+```nu
 npm login
 npm publish --access public
 ```
 
-Pi install smoke after publish:
+After publish, replace `<version>` and run an isolated load smoke:
 
-```bash
-PI_CODING_AGENT_DIR=$(mktemp -d) pi -e npm:pi-background-tasks@0.7.4 --offline --no-tools --no-session -p "/jobs"
-pi install npm:pi-background-tasks@0.7.4
+```nu
+let agent_dir = (mktemp -d)
+with-env {
+  PI_CODING_AGENT_DIR: $agent_dir
+  PI_CODING_AGENT_SESSION_DIR: ($agent_dir | path join sessions)
+} {
+  pi -e $"npm:pi-background-tasks@<version>" --offline --no-tools --no-session -p "/jobs"
+}
 ```
 
 ## Publish to git
 
-Because Pi git package installs treat the repository root as the package root, do not point Pi at the `ai-pipeline` monorepo root for this package. Push the contents of `packages/pi-background-tasks/` to a standalone repository.
+Pi git installs use the repository root as the package root. Publish this package from its standalone repository, not from a parent monorepo.
 
-```bash
-cd packages/pi-background-tasks
+```nu
 git status --short --branch
 git log --oneline -3
 git remote -v
 git push origin main
-git tag v0.7.4
-git push origin v0.7.4
+git tag $"v<version>"
+git push origin $"v<version>"
 ```
 
-Pi install smoke after git tag, using an isolated Pi agent directory so no local checkout or user `~/.pi` state is involved:
+Creating a tag and publishing are irreversible release actions. Confirm the version and commit before either action.
 
-```bash
-PI_CODING_AGENT_DIR=$(mktemp -d) pi -e git:github.com/ismailsaleekh/pi-background-tasks@v0.7.4 --offline --no-tools --no-session -p "/jobs"
-pi install git:github.com/ismailsaleekh/pi-background-tasks@v0.7.4
-```
+## Package index
 
-## pi.dev/packages
-
-The package includes the `pi-package` keyword and a `pi.extensions` manifest. After npm publish, it should be discoverable by pi.dev package indexing. If it does not appear automatically, submit/refresh the package according to the pi.dev package-gallery process.
+The package includes the `pi-package` keyword and `pi.extensions` manifest. After npm publish, verify that the new version appears in the Pi package index.
