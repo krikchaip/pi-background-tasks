@@ -21,10 +21,10 @@ const scriptedProviderPath = resolve('tests/scripted-provider/scripted-provider-
 const roots: string[] = [];
 
 type Scenario =
-  | 'bg-run-follow-up'
+  | 'bg-run-steering'
   | 'notify-false'
   | 'wake-false'
-  | 'failed-follow-up'
+  | 'failed-steering'
   | 'display-only-bg';
 
 async function harness(scenario: Scenario) {
@@ -245,44 +245,49 @@ async function disposeHarness(h: Awaited<ReturnType<typeof harness>>) {
   }
 }
 
-void describe('scripted-provider completion follow-up behavior', { concurrency: false }, () => {
+void describe('scripted-provider completion delivery behavior', { concurrency: false }, () => {
   void it(
-    'BUG-181 bg_run yields without polling and its completion event triggers one real follow-up turn',
+    'delivers completion by steering at the next model-call boundary while the agent is active',
     { timeout: 15_000 },
     async () => {
-      const h = await harness('bg-run-follow-up');
+      const h = await harness('bg-run-steering');
       try {
         await h.session.prompt('Start the scripted background task.');
         await waitFor(() => customNotifications(h.session).length === 1, 'background notification');
-        await waitFor(
-          async () => (await providerEvents(h.eventsPath)).length >= 3,
-          'third provider call from follow-up',
-        );
         await h.session.agent.waitForIdle();
 
         const events = await providerEvents(h.eventsPath);
-        assert.equal(events.length, 3);
         const launchEvent = requiredAt(events, 0, 'launch provider event should be recorded');
         const launchContract = launchEvent.eventDrivenContract;
         assert.ok(launchContract, 'launch event should record the effective prompt contract');
         assert.equal(launchContract.systemPrompt, true);
         assert.equal(launchContract.toolDescriptions, true);
-        const postToolEvent = requiredAt(events, 1, 'post-tool provider event should be recorded');
-        assert.equal(postToolEvent.eventDrivenContract?.launchReceipt, true);
+        const activeStreamEvent = requiredAt(
+          events,
+          1,
+          'active streaming provider event should be recorded',
+        );
+        assert.equal(activeStreamEvent.eventDrivenContract?.launchReceipt, true);
         assert.deepEqual(
           assistantToolNames(h.session),
-          ['bg_run'],
-          'ordinary event-driven waiting must not issue bg_status, bg_logs, or a sleep tool',
+          ['bg_run', 'scripted_echo'],
+          'the active run must continue without bg_status, bg_logs, or a sleep tool',
         );
-        const followUpEvent = requiredAt(events, 2, 'follow-up provider event should be recorded');
-        assert.equal(followUpEvent.callCount, 3);
+        const steeringEvent = requiredAt(
+          events,
+          2,
+          'next provider call after the active tool should be recorded',
+        );
+        assert.equal(steeringEvent.callCount, 3);
         assert.match(
-          (followUpEvent.summaries ?? []).join('\n'),
-          /background-task-notification|Scripted Wakeup/,
+          (steeringEvent.summaries ?? []).join('\n'),
+          /<status>completed<\/status>/,
+          'completion must reach the next model call instead of waiting for agent idle',
         );
+        assert.equal(events.length, 3, 'steering must not create an extra idle wake-up call');
         assert.ok(
           assistantTexts(h.session).some((text) =>
-            text.includes('Follow-up turn observed background-task-notification'),
+            text.includes('Steering turn observed background-task-notification'),
           ),
         );
 
@@ -364,10 +369,10 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
   );
 
   void it(
-    'failed background tasks include error fields and still wake a follow-up turn',
+    'failed background tasks include error fields and wake an idle agent through steering',
     { timeout: 15_000 },
     async () => {
-      const h = await harness('failed-follow-up');
+      const h = await harness('failed-steering');
       try {
         await h.session.prompt('Start the failing scripted background task.');
         await waitFor(
@@ -376,7 +381,7 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
         );
         await waitFor(
           async () => (await providerEvents(h.eventsPath)).length >= 3,
-          'failed-task follow-up provider call',
+          'failed-task steering provider call',
         );
         await h.session.agent.waitForIdle();
 
@@ -401,18 +406,18 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
 
         const events = await providerEvents(h.eventsPath);
         assert.equal(events.length, 3);
-        const failedFollowUpEvent = requiredAt(
+        const failedSteeringEvent = requiredAt(
           events,
           2,
-          'failed-task follow-up provider event should be recorded',
+          'failed-task steering provider event should be recorded',
         );
         assert.match(
-          (failedFollowUpEvent.summaries ?? []).join('\n'),
+          (failedSteeringEvent.summaries ?? []).join('\n'),
           /background-task-notification|Failing Scripted/,
         );
         assert.ok(
           assistantTexts(h.session).some((text) =>
-            text.includes('Follow-up turn observed failed background task notification'),
+            text.includes('Steering delivery observed failed background task notification'),
           ),
         );
       } finally {
@@ -422,7 +427,7 @@ void describe('scripted-provider completion follow-up behavior', { concurrency: 
   );
 
   void it(
-    '/bg remains display-only: it notifies but does not trigger a provider follow-up',
+    '/bg remains display-only: it notifies but does not trigger an idle provider turn',
     { timeout: 15_000 },
     async () => {
       const h = await harness('display-only-bg');

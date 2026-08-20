@@ -2,7 +2,7 @@
 
 Tracked background **shell tasks** for [Pi](https://pi.dev/).
 
-The package starts named shell commands, stores their output in temporary files, provides bounded log reads, stops timed-out or selected tasks, and shows task state in the focused task dock. A completed shell task can notify the current Pi session and start its next turn.
+The package starts named shell commands, stores their output in temporary files, provides bounded log reads, stops timed-out or selected tasks, and shows task state in the focused task dock. A terminal task event is steered into the next model-call boundary while the agent is active. It can start a new turn when Pi is idle.
 
 ## Install
 
@@ -26,7 +26,7 @@ pi install git:github.com/krikchaip/pi-background-tasks@personal
 - `bg_logs` — read bounded task output.
 - `bg_kill` — stop a running task.
 
-`bg_run` requires `name` and `command`. It defaults `notifyOnCompletion` and `triggerOnCompletion` to `true`. A task terminal event then notifies the current Pi session and starts a follow-up turn. Use `notifyOnCompletion: false` only when you will inspect the task yourself.
+`bg_run` requires `name` and `command`. It defaults `notifyOnCompletion` and `triggerOnCompletion` to `true`. A task terminal event then notifies the current Pi session through steering. It reaches the next model-call boundary while the agent is active, or starts a new turn when Pi is idle. Use `notifyOnCompletion: false` only when you will inspect the task yourself.
 
 ## Task dock
 

@@ -58,7 +58,7 @@ The suite verifies:
 - `bg_run`, `bg_status`, `bg_logs`, and `bg_kill` schemas and runtime behavior;
 - `/bg`, `/jobs`, `/logs`, `/kill`, `/tasks`, `/bg-tasks`, and `/bg-clear`;
 - shell spawn, output capture, bounded reads, timeout, output cap, process-tree kill, shutdown, and race handling;
-- completion notifications, optional follow-up turns, and exactly-once terminal EventBus publication after durable metadata;
+- steering completion notifications, optional idle wake-up turns, and exactly-once terminal EventBus publication after durable metadata;
 - focused dock list/detail views, history, output scrolling, stop, stop-all, rerun, path display, shortcuts, ANSI safety, and width limits;
 - package contents, peer dependency posture, TypeBox compatibility, isolated tarball install, and extension startup;
 - old session notifications can contain removed fields without exposing them in current snapshots.

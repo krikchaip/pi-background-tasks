@@ -738,7 +738,7 @@ void describe('BackgroundTaskRegistry', () => {
         notification.message.content,
         /<guidance>Terminal state and output metadata are durable\. Do not call bg_status to reconfirm; use bg_logs only if output is needed\.<\/guidance>/,
       );
-      assert.deepEqual(notification.options, { deliverAs: 'followUp', triggerTurn: true });
+      assert.deepEqual(notification.options, { deliverAs: 'steer', triggerTurn: true });
 
       const capped = await h.registry.startTask(h.ctx, 'node noisy.js', {
         name: 'Output Race',

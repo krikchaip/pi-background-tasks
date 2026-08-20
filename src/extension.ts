@@ -173,7 +173,7 @@ const BgRunParams = Type.Object({
   triggerOnCompletion: Type.Optional(
     Type.Boolean({
       description:
-        'Whether that notification should automatically trigger a follow-up agent turn. Default: true for bg_run; requires notifyOnCompletion.',
+        'Whether that notification should start an agent turn when Pi is idle. Default: true for bg_run; requires notifyOnCompletion. Active runs receive the notification through steering.',
     }),
   ),
 });
@@ -586,14 +586,14 @@ export default function backgroundTasksExtension(pi: ExtensionAPI): void {
   pi.registerTool<typeof BgRunParams, BgRunDetails>({
     name: 'bg_run',
     label: 'Background Run',
-    description: `Start a named long-running shell command in the background and return immediately with a task ID and output path. By default, completed, failed, or killed terminal state is delivered automatically as <background-task-notification> and starts a follow-up agent turn; do not sleep or poll merely to wait. Output is written to the system temporary directory and model-visible logs are bounded to ${formatSize(MAX_LOG_BYTES)}.`,
+    description: `Start a named long-running shell command in the background and return immediately with a task ID and output path. By default, completed, failed, or killed terminal state is delivered automatically as <background-task-notification>. It is steered into the next model-call boundary while the agent is active, or starts a new turn when Pi is idle; do not sleep or poll merely to wait. Output is written to the system temporary directory and model-visible logs are bounded to ${formatSize(MAX_LOG_BYTES)}.`,
     promptSnippet:
-      'Start a named long-running shell command; default terminal notification wakes a follow-up turn, so yield instead of polling',
+      'Start a named long-running shell command; default terminal notification steers active work or wakes an idle agent',
     promptGuidelines: [
       'Use bg_run instead of bash for commands expected to run for a long time, such as test suites, dev servers, watchers, or builds.',
       'When using bg_run, always set name to a concise 2-6 word human-readable label for the footer task dock; do not use the raw command as the name unless it is already short and meaningful.',
-      'bg_run returns immediately. With notifyOnCompletion:true and triggerOnCompletion:true (both defaults), completed, failed, or killed terminal state is delivered as <background-task-notification> and automatically starts a follow-up agent turn.',
-      'After a default bg_run launch, continue only independent useful work that does not merely wait for the task; otherwise briefly acknowledge it if useful, then end the current turn. Do not call sleep, bg_status, or bg_logs merely to wait; the terminal notification will wake you.',
+      'bg_run returns immediately. With notifyOnCompletion:true and triggerOnCompletion:true (both defaults), completed, failed, or killed terminal state is delivered as <background-task-notification>, steered into the next model-call boundary during active work, or starts a new turn when Pi is idle.',
+      'After a default bg_run launch, continue only independent useful work that does not merely wait for the task; otherwise briefly acknowledge it if useful, then end the current turn. Do not call sleep, bg_status, or bg_logs merely to wait; the terminal notification will reach the agent automatically.',
       'Treat <background-task-notification> as durable terminal truth. Do not call bg_status to reconfirm it; call bg_logs only when the task output is needed.',
       'Use bg_status/bg_logs only when the user explicitly requests an update, automatic notification or wake-up was deliberately disabled, there is concrete evidence the task is hung, or a terminal notification arrived and output details are needed.',
       'Do not set notifyOnCompletion:false or triggerOnCompletion:false unless intentionally opting out of automatic completion handling.',

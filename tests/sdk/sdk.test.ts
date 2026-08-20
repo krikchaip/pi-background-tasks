@@ -364,7 +364,7 @@ void describe('shell-task SDK integration', { concurrency: false }, () => {
     try {
       const prompt = session.extensionRunner.createContext().getSystemPrompt();
       assert.match(prompt, /Do not call sleep, bg_status, or bg_logs merely to wait/);
-      assert.match(prompt, /automatically starts a follow-up agent turn/);
+      assert.match(prompt, /steered into the next model-call boundary/);
       assert.match(prompt, /Treat <background-task-notification> as durable terminal truth/);
       assert.doesNotMatch(prompt, /After bg_run, use bg_status and bg_logs to inspect progress/);
 
@@ -378,8 +378,8 @@ void describe('shell-task SDK integration', { concurrency: false }, () => {
 
       const command = await script(cwd, 'receipt', 'setTimeout(() => {}, 30_000);\n');
       const cases = [
-        [{}, true, true, /Automatic follow-up turn: enabled/],
-        [{ notifyOnCompletion: true, triggerOnCompletion: false }, true, false, /will not start an agent turn/],
+        [{}, true, true, /Automatic idle wake-up: enabled/],
+        [{ notifyOnCompletion: true, triggerOnCompletion: false }, true, false, /will not start an agent turn while Pi is idle/],
         [{ notifyOnCompletion: false, triggerOnCompletion: true }, false, true, /triggerOnCompletion has no effect/],
         [{ notifyOnCompletion: false, triggerOnCompletion: false }, false, false, /deliberate manual monitoring/],
       ] as const;

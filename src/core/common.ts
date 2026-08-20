@@ -82,7 +82,8 @@ export function deriveCompletionDeliveryGuidance(
       automaticWakeEnabled: true,
       text: [
         'Terminal notification: enabled.',
-        'Automatic follow-up turn: enabled.',
+        'Steering delivery: enabled at the next model-call boundary while the agent is active.',
+        'Automatic idle wake-up: enabled.',
         'Next action: do not poll or sleep merely to wait; continue only independent useful work, otherwise end this turn and wait for <background-task-notification>.',
       ].join('\n'),
     };
@@ -95,7 +96,8 @@ export function deriveCompletionDeliveryGuidance(
       automaticWakeEnabled: false,
       text: [
         'Terminal notification: enabled.',
-        'Automatic follow-up turn: disabled. The terminal notification will be delivered, but it will not start an agent turn.',
+        'Steering delivery: enabled at the next model-call boundary while the agent is active.',
+        'Automatic idle wake-up: disabled. The terminal notification will not start an agent turn while Pi is idle.',
         'Next action: automatic wake-up was explicitly disabled; use bg_status/bg_logs only when deliberate monitoring is required, without tight polling.',
       ].join('\n'),
     };
@@ -107,9 +109,10 @@ export function deriveCompletionDeliveryGuidance(
     automaticWakeEnabled: false,
     text: [
       'Terminal notification: disabled.',
+      'Steering delivery: disabled.',
       triggerOnCompletion
-        ? 'Automatic follow-up turn: disabled because terminal notifications are disabled. triggerOnCompletion has no effect while notifyOnCompletion is false.'
-        : 'Automatic follow-up turn: disabled.',
+        ? 'Automatic idle wake-up: disabled because terminal notifications are disabled. triggerOnCompletion has no effect while notifyOnCompletion is false.'
+        : 'Automatic idle wake-up: disabled.',
       'Next action: completion delivery was explicitly disabled; use bg_status/bg_logs only for deliberate manual monitoring, without tight polling.',
     ].join('\n'),
   };

@@ -25,10 +25,10 @@ const DEFAULT_USAGE = {
 };
 
 type Scenario =
-  | 'bg-run-follow-up'
+  | 'bg-run-steering'
   | 'notify-false'
   | 'wake-false'
-  | 'failed-follow-up'
+  | 'failed-steering'
   | 'display-only-bg'
   | 'multiline-command';
 type ScriptedStopReason = 'stop' | 'length' | 'toolUse';
@@ -48,15 +48,15 @@ type ScriptedBlock = TextContent | ScriptedToolCall;
 
 function parseScenario(value: string | undefined): Scenario {
   if (
-    value === 'bg-run-follow-up' ||
+    value === 'bg-run-steering' ||
     value === 'notify-false' ||
     value === 'wake-false' ||
-    value === 'failed-follow-up' ||
+    value === 'failed-steering' ||
     value === 'display-only-bg' ||
     value === 'multiline-command'
   )
     return value;
-  return 'bg-run-follow-up';
+  return 'bg-run-steering';
 }
 
 function record(event: JsonObject): void {
@@ -134,7 +134,7 @@ function inspectEventDrivenContract(context: Context): EventDrivenContractCheck 
   return {
     systemPrompt:
       systemPrompt.includes('Do not call sleep, bg_status, or bg_logs merely to wait') &&
-      systemPrompt.includes('automatically starts a follow-up agent turn') &&
+      systemPrompt.includes('steered into the next model-call boundary') &&
       systemPrompt.includes('A running result is not an instruction to poll again') &&
       !systemPrompt.includes('After bg_run, use bg_status and bg_logs to inspect progress'),
     toolDescriptions:
@@ -143,7 +143,8 @@ function inspectEventDrivenContract(context: Context): EventDrivenContractCheck 
       toolDescription('bg_logs').includes('not a waiting primitive'),
     launchReceipt:
       bgRunResult?.includes('Terminal notification: enabled.') === true &&
-      bgRunResult.includes('Automatic follow-up turn: enabled.'),
+      bgRunResult.includes('Steering delivery: enabled') &&
+      bgRunResult.includes('Automatic idle wake-up: enabled.'),
   };
 }
 
@@ -179,7 +180,7 @@ function responseFor(scenario: Scenario, callCount: number): ScriptedAssistantMe
     return assistant([text('Multiline bleed task started.')], 'stop');
   }
 
-  if (scenario === 'bg-run-follow-up') {
+  if (scenario === 'bg-run-steering') {
     if (callCount === 1) {
       return assistant(
         [
@@ -188,7 +189,7 @@ function responseFor(scenario: Scenario, callCount: number): ScriptedAssistantMe
             {
               name: 'Scripted Wakeup',
               command: shellNode(
-                "setTimeout(() => { console.log('scripted wakeup done'); }, 150);",
+                "setTimeout(() => { console.log('scripted wakeup done'); }, 120);",
               ),
               notifyOnCompletion: true,
             },
@@ -200,12 +201,12 @@ function responseFor(scenario: Scenario, callCount: number): ScriptedAssistantMe
     }
     if (callCount === 2) {
       return assistant(
-        [text('Initial bg_run tool turn yielded without polling for the terminal event.')],
-        'stop',
+        [toolCall('scripted_echo', { value: 'continue active run' }, 'call-continue-active-run')],
+        'toolUse',
       );
     }
     return assistant(
-      [text('Follow-up turn observed background-task-notification for Scripted Wakeup.')],
+      [text('Steering turn observed background-task-notification for Scripted Wakeup.')],
       'stop',
     );
   }
@@ -252,7 +253,7 @@ function responseFor(scenario: Scenario, callCount: number): ScriptedAssistantMe
     return assistant([text('Notification-only initial turn finished.')], 'stop');
   }
 
-  if (scenario === 'failed-follow-up') {
+  if (scenario === 'failed-steering') {
     if (callCount === 1) {
       return assistant(
         [
@@ -273,7 +274,7 @@ function responseFor(scenario: Scenario, callCount: number): ScriptedAssistantMe
     }
     if (callCount === 2) return assistant([text('Failing task initial turn finished.')], 'stop');
     return assistant(
-      [text('Follow-up turn observed failed background task notification.')],
+      [text('Steering delivery observed failed background task notification.')],
       'stop',
     );
   }
@@ -372,9 +373,14 @@ export default function scriptedProviderExtension(pi: ExtensionAPI): void {
         summaries: context.messages.map(summarizeMessage),
       });
       const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => {
+      const respond = () => {
         pushMessage(stream, responseFor(scenario, callCount));
-      });
+      };
+      if (scenario === 'bg-run-steering' && callCount === 2) {
+        setTimeout(respond, 350);
+      } else {
+        queueMicrotask(respond);
+      }
       return stream;
     },
   });

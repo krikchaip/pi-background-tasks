@@ -72,11 +72,13 @@ void describe('shell task core', () => {
 
   void it('reports completion delivery settings truthfully', () => {
     assert.match(deriveCompletionDeliveryGuidance(true, true).text, /notification: enabled/i);
-    assert.match(deriveCompletionDeliveryGuidance(true, true).text, /follow-up turn: enabled/i);
-    assert.match(deriveCompletionDeliveryGuidance(true, false).text, /follow-up turn: disabled/i);
+    assert.match(deriveCompletionDeliveryGuidance(true, true).text, /steering delivery: enabled/i);
+    assert.match(deriveCompletionDeliveryGuidance(true, true).text, /idle wake-up: enabled/i);
+    assert.match(deriveCompletionDeliveryGuidance(true, false).text, /idle wake-up: disabled/i);
     const disabled = deriveCompletionDeliveryGuidance(false, true).text;
     assert.match(disabled, /notification: disabled/i);
-    assert.match(disabled, /follow-up turn: disabled/i);
+    assert.match(disabled, /steering delivery: disabled/i);
+    assert.match(disabled, /idle wake-up: disabled/i);
   });
 
   void it('creates shell-only snapshots and readable task lists', () => {
